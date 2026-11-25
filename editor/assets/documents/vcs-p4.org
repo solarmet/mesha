@@ -1,0 +1,22 @@
+#+TITLE: vcs-p4
+
+- Client :: {{{vcs-p4.client}}}
+- User :: {{{vcs-p4.user}}}
+- Server :: {{{vcs-p4.server}}}
+
+{{{vcs-p4.note}}}
+
+{{{vcs-p4.unlisted}}}
+
+* Default changelist ({{{vcs-p4.default-count}}})
+#+BEGIN: table :source vcs-p4.default :columns "action path" :fill path
+#+END:
+
+* Pending changelists ({{{vcs-p4.pending-count}}})
+#+BEGIN: group :by vcs-p4.changelists :key change :source vcs-p4.opened :columns "action path" :fill path
+** Change {{{change}}}  {{{description}}} ({{{count()}}})  {{{shelved}}}
+#+END:
+
+* Recent submitted changes
+#+BEGIN: table :source vcs-p4.submitted :columns "change user date description" :rows 10 :fill description
+#+END:

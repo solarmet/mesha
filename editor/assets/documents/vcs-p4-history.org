@@ -1,0 +1,8 @@
+#+TITLE: History
+
+- Query :: p4 changes {{{vcs-p4.history-query}}}
+
+{{{vcs-p4.history-note}}}
+
+#+BEGIN: table :source vcs-p4.history :columns "change user date description" :fill description
+#+END:

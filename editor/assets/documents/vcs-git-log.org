@@ -1,0 +1,8 @@
+#+TITLE: Log
+
+- Query :: git log {{{vcs-git.log-query}}}
+
+{{{vcs-git.log-note}}}
+
+#+BEGIN: table :source vcs-git.log :columns "hash refs subject author date" :fill subject
+#+END:

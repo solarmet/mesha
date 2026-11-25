@@ -1,0 +1,32 @@
+#+TITLE: vcs-git
+#+REFRESH: 5s
+
+- Head :: {{{vcs-git.branch}}}  {{{vcs-git.head-subject}}}
+- Upstream :: {{{vcs-git.upstream}}}  {{{vcs-git.ahead-behind}}}
+- Stashes :: {{{vcs-git.stashes}}}
+
+{{{vcs-git.operation}}}
+
+{{{vcs-git.unlisted}}}
+
+{{{vcs-git.clean}}}
+
+* Untracked files ({{{vcs-git.untracked-count}}})
+#+BEGIN: table :source vcs-git.untracked :columns "path" :fill path
+#+END:
+
+* Unmerged ({{{vcs-git.unmerged-count}}})
+#+BEGIN: table :source vcs-git.unmerged :columns "change path" :fill path
+#+END:
+
+* Unstaged changes ({{{vcs-git.unstaged-count}}})
+#+BEGIN: table :source vcs-git.unstaged :columns "change path" :fill path
+#+END:
+
+* Staged changes ({{{vcs-git.staged-count}}})
+#+BEGIN: table :source vcs-git.staged :columns "change path" :fill path
+#+END:
+
+* Recent commits
+#+BEGIN: table :source vcs-git.commits :columns "hash subject author date" :rows 10 :fill subject
+#+END:

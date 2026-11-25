@@ -1,0 +1,15 @@
+.{
+    .name = .mesha_editor,
+    .fingerprint = 0xa281e5b600637330,
+    .version = "0.0.1",
+    .minimum_zig_version = "0.16.0",
+    .dependencies = .{
+        .mesha = .{ .path = "../sdk/mesha" },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+        "assets",
+    },
+}

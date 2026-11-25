@@ -1,0 +1,39 @@
+const std = @import("std");
+
+/// The plugin `user`: the `user` module, and `libuser.so` built from `src/root.zig`
+/// into this directory's `zig-out`. The host runs this file: it builds this plugin together
+/// with the editor, from the build beside the editor (a checkout's `plugins/build.zig`, a
+/// distribution's root `build.zig`), which takes this package as a dependency and installs
+/// its library `user`, so a dependency, module or step added here or in `build.zig.zon`
+/// takes effect there. Keep the three options below and the library's name: that build passes
+/// the options, and looks for the library by name. `zig build` here builds it on its own, with
+/// no host running. A mistake here that keeps the file from compiling or configuring ends that
+/// build; the host then builds the editor alone, and builds both again once this file is
+/// fixed.
+pub fn build(b: *std.Build) void {
+    const target = b.standardTargetOptions(.{});
+    const optimize = b.standardOptimizeOption(.{});
+    // As the host's default: the self-hosted backend for a Debug build on x86_64 other than
+    // Windows, LLVM otherwise. The host's watch always passes it.
+    const self_hosted_target = target.result.os.tag != .windows and target.result.cpu.arch == .x86_64;
+    const default_llvm = !self_hosted_target or optimize != .Debug;
+    const use_llvm = b.option(bool, "llvm", "Build the plugin with the LLVM backend instead of the self-hosted x86_64 backend") orelse default_llvm;
+
+    const enable_profile = b.option(bool, "profile-enabled", "Record profile zones") orelse true;
+    const mesha_dep = b.dependency("mesha", .{ .target = target, .optimize = optimize, .@"profile-enabled" = enable_profile });
+
+    const plugin_mod = b.addModule("user", .{
+        .root_source_file = b.path("src/root.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    plugin_mod.addImport("mesha", mesha_dep.module("mesha"));
+
+    const plugin_lib = b.addLibrary(.{
+        .name = "user",
+        .linkage = .dynamic,
+        .root_module = plugin_mod,
+        .use_llvm = use_llvm,
+    });
+    b.installArtifact(plugin_lib);
+}

@@ -1,0 +1,197 @@
+//! The plugin `@NAME@`, with a panel of its own: mesha builds this file as `lib@NAME@.so`,
+//! loads it, and loads it again each time it is rebuilt, which it is whenever you save it.
+//!
+//! It is written as the editor is: systems and kernels over tables, run by a sequencer, every
+//! frame. Its panel is open because a system declares it each frame (`declarePanel`), and
+//! the panel's whole frame is the plugin's to draw (`plugin_render_panel`): the usual header
+//! along its top, and its ui under that. Add a system to `frameRoot`'s steps and it runs every
+//! frame; its state belongs in tables, which a reload keeps.
+const mesha = @import("mesha");
+const ui = mesha.ui;
+const Atom = mesha.Atom;
+const Table = mesha.Table;
+const memory_mod = mesha.memory;
+const sequencer = mesha.sequencer;
+const journal = mesha.journal;
+const roop = mesha.roop;
+const plugin = mesha.plugin;
+const panels = mesha.panels;
+const resources = mesha.resources;
+
+/// The plugin's name, its directory's, which names its row: the fonts it asks for are read
+/// from that directory's `assets/`.
+const name = Atom.from("@NAME@");
+
+/// The plugin's font: `font_file` in its own `assets/`, at `font_pixel_height`. Font names are
+/// shared by every plugin, so its own begin with its name.
+const text_font_name = "@NAME@_text";
+const text_font = Atom.from(text_font_name);
+const font_file = "fonts/OpenSans-Regular.ttf";
+const font_pixel_height = 32;
+
+const ui_elements = 16;
+const text_color = ui.rgb(240, 236, 226);
+
+/// The plugin's panel, by its id, and what its header says.
+const panel_id = Atom.from("@NAME@");
+const panel_title = "@NAME@";
+
+/// The systems that run once a frame, in this order: built where it is used, at init for its
+/// names and each frame for its run. A system is a function that returns a
+/// `sequencer.System`; add `.{ .system = yourSystem() }` to the steps, and make the count in
+/// `Built` the number of steps.
+fn frameRoot() sequencer.Built(1) {
+    return .{ .name = "@NAME@_frame", .steps = .{
+        .{ .system = panelSystem() },
+    } };
+}
+
+/// Declares the plugin's panel, every frame: the panel is open while this runs, and closes
+/// when the plugin is unloaded. The editor may hide it, as when another workspace is
+/// arranged; `panels.isOpen` says whether it is open.
+fn panelSystem() sequencer.System {
+    return .{
+        .name = "@NAME@_panel",
+        .root = name,
+        .claims = sequencer.claims_nothing,
+        .access = panelAccess,
+        .kernels = &.{.{ .name = "@NAME@_panel.declare", .run = declarePanel }},
+    };
+}
+
+const declared_panels = Atom.from(plugin.panels.declared_table_name);
+
+fn panelAccess(frame: *const sequencer.Frame) sequencer.Access {
+    var result: sequencer.Access = .{};
+    result.writeIfPresent(frame.tables, declared_panels);
+    return result;
+}
+
+fn declarePanel(pass: *sequencer.Pass) !void {
+    if (!pass.writes(declared_panels)) return;
+    const frame = pass.frame;
+    plugin.panels.declare(frame.memory, frame.tables, .{ .id = panel_id, .title = panel_title, .root = name });
+}
+
+pub export fn plugin_bind_log(shared: ?*mesha.log.SharedState) callconv(.c) void {
+    mesha.log.bindSharedState(shared);
+}
+
+/// The layout this image was built with, which the loader compares with its own.
+pub export fn plugin_abi() callconv(.c) u64 {
+    return plugin.abi_fingerprint;
+}
+
+pub export fn plugin_tag(atoms: *Atom.Registry) callconv(.c) Atom {
+    _ = atoms;
+    return name;
+}
+
+/// Runs when the plugin loads and after every rebuild, on the tables as they are: make what is
+/// missing and leave what is there.
+pub export fn plugin_init(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Registry) callconv(.c) bool {
+    ensure(memory, atoms, tables) catch return false;
+    return true;
+}
+
+fn ensure(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Registry) !void {
+    const scratch = try memory.tableScratchAllocator();
+    try sequencer.ensure(scratch, atoms, tables);
+    // The systems' names are interned once, here, so their kernels never intern.
+    const frame_root = frameRoot();
+    try sequencer.internNames(atoms, &frame_root.sequencer());
+    // A system's name names its inbox: one shared with another system would lose messages.
+    try sequencer.checkNamesFree(tables, &frame_root.sequencer());
+    try sequencer.ensureInboxes(scratch, atoms, tables, &frame_root.sequencer());
+    // Everything the plugin loads is asked for here, at init, as its font is: nothing loads on
+    // first use. Ask for a table document (`request_table`), a figure or a sketch the same way.
+    try requestFont(memory, atoms, tables);
+}
+
+/// Asks resources for the plugin's font, from its own `assets/`. A font already loaded, as when
+/// the plugin reloads in place, is joined, not read again; the plugin's release unloads it.
+/// Until it arrives the text draws nothing.
+fn requestFont(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Registry) !void {
+    // Interned, so the tools read the font's name as text.
+    try atoms.tryInternAll(&.{text_font_name});
+    const scope = resources.applicationScope(memory);
+    const decl: resources.ResourceDecl = .{ .name = text_font, .kind = .font, .path = font_file, .pixel_height = font_pixel_height };
+    resources.request(memory, tables, .{ .load_resource = .{ .scope = scope, .decl = decl, .plugin = name } });
+}
+
+/// Runs once as the plugin is unloaded for good, never for a rebuild: its systems run no
+/// more, so what they declared, the panel among it, goes.
+pub export fn plugin_deinit(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Registry) callconv(.c) void {
+    _ = memory;
+    _ = atoms;
+    const frame_root = frameRoot();
+    sequencer.retireSubscribers(tables, &frame_root.sequencer());
+}
+
+/// `layer` is the journal layer of the host's run: this plugin's run is its child.
+pub export fn plugin_update(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Registry, layer: *journal.Layer) callconv(.c) void {
+    var context: Context = .{};
+    const env: sequencer.Env = .{
+        .memory = memory,
+        .atoms = atoms,
+        .tables = tables,
+        .hooks = .{ .context = &context, .enter = Context.around, .leave = Context.around, .finished = Context.finished },
+    };
+    const frame_root = frameRoot();
+    _ = sequencer.run(&frame_root.sequencer(), &env, layer);
+}
+
+/// The systems need nothing around their runs.
+const Context = struct {
+    fn around(context: *anyopaque, system: *const sequencer.System) void {
+        _ = context;
+        _ = system;
+    }
+
+    fn finished(context: *anyopaque, system: *const sequencer.System, changed: bool) void {
+        _ = context;
+        _ = system;
+        _ = changed;
+    }
+};
+
+/// The host asks every plugin for every panel: this one draws its own, whose whole frame in
+/// the window is `frame` and which `ctx` begins at the corner of, and nothing in any other.
+pub export fn plugin_render_panel(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *Atom.Registry, panel: Atom, frame: plugin.Viewport, ctx: *roop.Context) callconv(.c) void {
+    if (panel != panel_id) return;
+    const scratch = memory.frameScratchAllocator() catch return;
+
+    // The usual header, along the top of the frame. Its presses go to the host's panel
+    // chrome through the editor's hit regions.
+    var header = ui.Tree.init(scratch, atoms, ui.panel_header.commands) catch return;
+    const focused = panels.hasFocus(tables, atoms, panel_id);
+    const options: ui.panel_header.Options = .{
+        .panel = panel_id,
+        .title = panel_title,
+        .focused = focused,
+        .maximized = panels.isMaximized(tables, atoms, panel_id),
+    };
+    if (ui.panel_header.begin(&header, options)) ui.panel_header.end(&header, options);
+    const header_config: ui.Config = .{
+        .root_size = .{ .x = frame.width, .y = ui.panel_header.height },
+        .offset = .{ .x = frame.x, .y = frame.y },
+        .depth = panels.kChromeHitDepth,
+    };
+    header.commit(header_config, ctx, tables.findByName(Atom.from(panels.hit_regions_name)));
+    ui.panel_header.drawFootLine(ctx, frame.width, if (focused) .focused else .unfocused);
+
+    // The plugin's ui, in what the frame has left under the header.
+    const whole: panels.Rect = .{ .x = frame.x, .y = frame.y, .w = frame.width, .h = frame.height };
+    const content = ui.panel_header.contentRect(whole);
+    var tree = ui.Tree.init(scratch, atoms, ui_elements) catch return;
+    const config: ui.Config = .{
+        .root_size = .{ .x = content.w, .y = content.h },
+        .origin = .{ .x = content.x - frame.x, .y = content.y - frame.y },
+        .offset = .{ .x = frame.x, .y = frame.y },
+    };
+    if (tree.beginRect("@NAME@.ui", .{ .size = .{ .w = .fill, .h = .fill }, .padding = 32 })) {
+        tree.text("@NAME@.hello", "Hello from @NAME@", .{ .font = text_font, .color = text_color });
+        tree.endRect();
+    }
+    tree.commit(config, ctx, null);
+}

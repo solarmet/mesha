@@ -1,0 +1,7 @@
+#+TITLE: Rebase
+
+- Rebasing :: {{{vcs-git.rebase-count}}} onto {{{vcs-git.rebase-onto}}}
+- Keys :: p pick, r reword, e edit, s squash, f fixup, k drop; M-p and M-n move; C-c C-c begins; C-c C-k or q leaves
+
+#+BEGIN: table :source vcs-git.rebase :columns "action hash subject" :fill subject
+#+END:
