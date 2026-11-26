@@ -9,7 +9,7 @@ const memory = mesha.memory;
 const Table = mesha.Table;
 const plugin = mesha.plugin;
 const panels_mod = mesha.panels;
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const roop = mesha.roop;
 const figure = mesha.figure;
 const gesture = @import("gesture.zig");
@@ -127,8 +127,10 @@ fn takesAction(frame: *const sequencer.Frame) bool {
 fn subscribe(pass: *sequencer.Pass) !void {
     const tables = pass.frame.tables;
     const atoms = pass.frame.atoms;
-    if (workspaces.activeWorkspace(tables, atoms) != .figure) return;
+    if (!workspace.stageShown(tables)) return;
     if (!enabled(session.get(tables))) return;
+    // A paused clip needs no frames: each one heard draws the figure's panels again.
+    if (config(tables).playing.* == 0) return;
     if (workspace.canvasViewport(tables, atoms) == null) return;
     _ = try pass.append(time_subscriptions, .{ .kind = time.SubscriptionKind.frame, .inbox = sequencer.inboxOf(system()), .tag = Atom.from(Msg.figure_animation_frame) });
 }
@@ -139,7 +141,7 @@ fn playFrames(pass: *sequencer.Pass) !void {
     const atoms = pass.frame.atoms;
     for (pass.frame.messages) |received| {
         if (received.tag.to(Msg) != .figure_animation_frame) continue;
-        if (workspaces.activeWorkspace(tables, atoms) != .figure) continue;
+        if (!workspace.stageShown(tables)) continue;
         const time_frame = try received.payloadAs(time.FrameMsg);
         tick(tables, atoms, time_frame.dt);
     }

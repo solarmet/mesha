@@ -336,6 +336,22 @@ pub const CmdPayload = union(enum) {
         /// When true, the modifier flags replace the host's currently-held modifiers.
         modifiers_present: bool = false,
     },
+    /// The operating system's repeat of a held key, as a key held at the keyboard sends; its
+    /// fields are `key_down`'s.
+    key_repeat: struct {
+        /// The key.
+        key: Key,
+        /// Shift is held for this event.
+        shift: bool = false,
+        /// Control is held for this event.
+        control: bool = false,
+        /// Alt is held for this event.
+        alt: bool = false,
+        /// Super is held for this event.
+        super: bool = false,
+        /// When true, the modifier flags replace the host's currently-held modifiers.
+        modifiers_present: bool = false,
+    },
     /// A key comes up; its fields are `key_down`'s.
     key_up: struct {
         /// The key.
@@ -396,7 +412,7 @@ pub const Source = enum(u8) { host, plugin, game };
 /// button pressed in one panel and released in another never sticks.
 pub const Scope = enum(u8) { local, global };
 
-/// What a `pressed` or a `delay_pressed` subscription asks for: a key, held.
+/// What a `pressed` or a `repeated` subscription asks for: a key, held.
 pub const KeySubscription = struct {
     /// The key.
     key: Key,
@@ -437,9 +453,11 @@ pub const MouseButtonSubscription = struct {
 pub const Subscription = union(enum) {
     /// A key held: a message at each dispatch while the key is down, with no payload.
     pressed: KeySubscription,
-    /// A key held, for what repeats: a message on the press, then at each dispatch once the key
-    /// has been held for 150 ms, with no payload.
-    delay_pressed: KeySubscription,
+    /// A key that repeats while held, as a caret's moves do: a message on the press and on each
+    /// repeat the operating system sends while the key is held (`Event.key_repeat`), at the
+    /// person's repeat delay and rate, with no payload unless `text_navigation` is set. No repeat
+    /// reaches it while a key sequence is under way.
+    repeated: KeySubscription,
 
     /// A key's press: one message, with no payload unless `text_navigation` is set. With a
     /// `chord` role the key is part of a sequence of keys.
@@ -816,6 +834,7 @@ pub const no_tag: Atom = @enumFromInt(0);
 pub fn toEvent(cmd: CmdPayload) Event {
     return switch (cmd) {
         .key_down => |c| .{ .key_down = c.key },
+        .key_repeat => |c| .{ .key_repeat = c.key },
         .key_up => |c| .{ .key_up = c.key },
         .mouse_button => |c| .{ .mouse_button = .{ .button = c.button, .x = c.x, .y = c.y, .action = c.action, .clicks = c.clicks } },
         .mouse_move => |c| .{ .mouse_move = .{ .x = c.x, .y = c.y } },
@@ -834,8 +853,8 @@ pub const Event = union(enum) {
     key_down: Key,
     /// A key came up.
     key_up: Key,
-    /// The operating system's repeat of a held key. Seen only by `key_input` subscribers: the
-    /// other key subscriptions keep their own repeat timing.
+    /// The operating system's repeat of a held key, at the person's repeat delay and rate. Seen
+    /// by `key_input` and `repeated` subscribers.
     key_repeat: Key,
     /// The window's size changed. No subscription hears it; the size is `os_window`'s.
     resize: struct { width: u32, height: u32 },

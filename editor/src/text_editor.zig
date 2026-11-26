@@ -32,7 +32,8 @@ const EditCommand = text_editor.EditCommand;
 
 /// Which keys the text editors answer: Emacs's, the keymaps of `text` and `buffer`, or the
 /// common ones (Ctrl+C, Ctrl+V, ...), which the minor mode `cua` puts over them (`cua_keys`). The
-/// setting says which; the panels' owners put `cua` in the modes they ask for while it says `cua`.
+/// setting says which; the panels' owners put `cua` in the modes they ask for while it says `cua`
+/// (`modes.modesFor`). The figure editor follows it too, its common keys `figure_cua`'s.
 pub const Keymap = enum(u8) {
     emacs,
     cua,
@@ -483,7 +484,7 @@ fn takeClipboardMessages(pass: *sequencer.Pass) !void {
 
 /// How a field's text looks.
 pub const FieldLook = struct {
-    font: Atom = style.ui_font,
+    font: roop.Font = style.ui_font,
     text: ui.Color,
     caret: ui.Color,
     selection: ui.Color = style.col.accent_wash,
@@ -551,7 +552,7 @@ pub const FieldDrawable = struct {
 };
 
 /// The width of the text before `offset`, in `font`.
-fn widthTo(ctx: *const roop.Context, font: Atom, view: *const text_editor.View, offset: u32) f32 {
+fn widthTo(ctx: *const roop.Context, font: roop.Font, view: *const text_editor.View, offset: u32) f32 {
     const pieces = view.range(0, offset);
     const first = ctx.measureText(font, pieces[0]).w;
     const second = ctx.measureText(font, pieces[1]).w;

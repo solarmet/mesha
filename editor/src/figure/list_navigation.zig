@@ -1,15 +1,17 @@
 //! Shared list geometry and bounded wheel movement for rendering and picking.
 const std = @import("std");
-pub const row_height: f32 = 24;
-pub const row_step: f32 = 24;
+const metric = style.metric;
+const style = @import("../ui/style.zig");
+pub const row_height: f32 = metric.row_height;
+pub const row_step: f32 = metric.row_height;
 /// A row's disclosure sits left of the drag capture; its eye and lock sit right of it.
 pub const capture_left: f32 = 28;
 pub const capture_right: f32 = 64;
 pub const toggle_width: f32 = 24;
-pub const tab_row_height: f32 = 28;
+pub const tab_row_height: f32 = metric.tab_height;
 /// Below this width the four category tabs wrap into two rows of full labels.
 pub const tab_wrap_width: f32 = 220;
-pub const folder_tools_height: f32 = 28;
+pub const folder_tools_height: f32 = metric.button_height;
 const panel_gap: f32 = 4;
 
 /// First outliner row's y offset: panel padding, tab row(s) and, when

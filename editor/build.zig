@@ -27,13 +27,15 @@ pub fn build(b: *std.Build) void {
     editor_mod.addImport("mesha", mesha_dep.module("mesha"));
     // The documents compiled into the editor (`@embedFile("vcs_git_document")`,
     // `@embedFile("vcs_git_log_document")`, `@embedFile("vcs_git_rebase_document")`, and vcs-p4's
-    // `@embedFile("vcs_p4_document")` and `@embedFile("vcs_p4_history_document")`): an `.org` edited and saved rebuilds and reloads the
-    // editor, which reads none at run time.
+    // `@embedFile("vcs_p4_document")` and `@embedFile("vcs_p4_history_document")`, and the list
+    // of plugins' `@embedFile("plugins_document")`): an `.org` edited and saved is built into the
+    // editor by its next build, and the editor reads none at run time.
     editor_mod.addAnonymousImport("vcs_git_document", .{ .root_source_file = b.path("assets/documents/vcs-git.org") });
     editor_mod.addAnonymousImport("vcs_git_log_document", .{ .root_source_file = b.path("assets/documents/vcs-git-log.org") });
     editor_mod.addAnonymousImport("vcs_git_rebase_document", .{ .root_source_file = b.path("assets/documents/vcs-git-rebase.org") });
     editor_mod.addAnonymousImport("vcs_p4_document", .{ .root_source_file = b.path("assets/documents/vcs-p4.org") });
     editor_mod.addAnonymousImport("vcs_p4_history_document", .{ .root_source_file = b.path("assets/documents/vcs-p4-history.org") });
+    editor_mod.addAnonymousImport("plugins_document", .{ .root_source_file = b.path("assets/documents/plugins.org") });
 
     const editor_lib = b.addLibrary(.{
         .name = "editor",

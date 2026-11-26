@@ -20,7 +20,7 @@
 //! retyped, not edited in place. Nothing here keeps anything between calls; `typeText` and
 //! `pressKey` write only the owner's cells they are given.
 const std = @import("std");
-const Atom = @import("../core/atom.zig").Atom;
+const Atom = atom.Atom;
 const memory_mod = @import("../core/memory.zig");
 const sequencer = @import("../core/sequencer.zig");
 const Table = @import("../core/table.zig");
@@ -28,6 +28,7 @@ const input = @import("../systems/input.zig");
 const roop = @import("../systems/roop.zig");
 const marks = @import("marks.zig");
 const ui = @import("ui.zig");
+const atom = @import("../core/atom.zig");
 
 /// A filter's state, as views of the owner's table fields: its text is a string cell of
 /// `table`, the table the owner's row is in. The pointers are the owner's, valid while the row
@@ -160,7 +161,7 @@ pub const Caret = enum { hidden, shown };
 /// plugin without one.
 pub const Style = struct {
     /// The name of the font of the text and the placeholder.
-    font: Atom,
+    font: roop.Font,
     /// The colour of the text typed.
     text: ui.Color,
     /// The colour of the placeholder, and of the magnifier while the field does not take keys.
@@ -196,7 +197,9 @@ pub const default_style = Style{
     .corner_radius = 2,
 };
 
-/// Space inside the frame around its parts, and between them, in pixels.
+/// Space inside the frame at its ends, and between its parts, in pixels. Above and below the
+/// parts there is none: the text is centred in the height the caller gives, which must be at
+/// least its font's line.
 const frame_padding: f32 = 4;
 /// The width of the magnifier's leaf, in pixels.
 const magnifier_width: f32 = 16;
@@ -220,6 +223,7 @@ pub fn render(tree: *ui.Tree, id: anytype, field: Field, placeholder: []const u8
         .cross_align = .center,
         .size = size,
         .padding = frame_padding,
+        .padding_y = 0,
         .gap = frame_padding,
         .bg = if (focused) style.background_active else style.background,
         .border = if (focused) style.accent else style.border,

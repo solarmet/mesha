@@ -235,7 +235,7 @@ fn shownOf(phase_value: u8, menu: usize, state: *const transient_menu.State) ?Sh
 }
 
 /// The owner the palette's value prompt is presented as, which tells its drawing that the menu
-/// stays shown above it.
+/// stays shown below it.
 pub const value_prompt_owner = Atom.from("editor_transient");
 
 // ---- the system -----------------------------------------------------------------------------

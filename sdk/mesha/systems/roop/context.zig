@@ -38,6 +38,8 @@ const font_mod = @import("../font.zig");
 const gfx_types = @import("../gfx/types.zig");
 const contract = @import("../../core/contract.zig");
 const memory_mod = @import("../../core/memory.zig");
+const sequencer = @import("../../core/sequencer.zig");
+const layer_stream = @import("layer_stream.zig");
 
 /// A 2D affine transform as six floats (`transform.Transform2D`).
 pub const Transform2D = transform.Transform2D;
@@ -84,7 +86,7 @@ pub const LineCap = enum { butt, round, square };
 pub const LineJoin = enum { miter, round, bevel };
 
 /// A Porter-Duff operation (`paint.composite.Operation`).
-pub const CompositeOperation = @import("paint.zig").composite.Operation;
+pub const CompositeOperation = paint_mod.composite.Operation;
 
 /// Where text sits against the x that `text` is given. `text` reads `center` and `right`: with
 /// neither set the text starts at x. The vertical flags are not read: y is always the baseline.
@@ -156,8 +158,8 @@ pub const State = struct {
     font_blur: f32,
     /// Where text sits against the x `text` is given.
     text_align: Align,
-    /// The font `text` draws in, by the name it was loaded under.
-    font_name: Atom,
+    /// The font `text` draws in.
+    font: resources_api.Font,
 };
 
 fn defaultState() State {
@@ -180,7 +182,7 @@ fn defaultState() State {
         .line_height = 1,
         .font_blur = 0,
         .text_align = .{ .left = true, .baseline = true },
-        .font_name = resources_api.kDefaultFontName,
+        .font = resources_api.Font.engine,
     };
 }
 
@@ -232,6 +234,10 @@ pub const Context = struct {
     frame: memory_mod.SharedAllocator = undefined,
     /// The host's: what recording reads of the renderer (fonts, images, the dummy slots).
     renderer: *Renderer,
+    /// The inbox told when a font text was drawn in before it loaded has loaded
+    /// (`Renderer.askFont`), so what drew may draw again; `sequencer.no_inbox` tells no one.
+    /// Whoever records sets it around what it records, as `ui.Tree.commit` does.
+    redraw_inbox: Atom = sequencer.no_inbox,
     /// What `render` draws into. The runtime's, made and resized on the render thread.
     target: RenderTarget,
 
@@ -288,7 +294,7 @@ pub const Context = struct {
 
     /// The frame's layer stream: layer markers and the spans of draw calls between them. Empty in a
     /// frame that opens no layer.
-    layer_ops: std.ArrayList(@import("layer_stream.zig").Op) = .empty,
+    layer_ops: std.ArrayList(layer_stream.Op) = .empty,
     /// How many layers are open.
     layer_depth: usize = 0,
     /// The first draw call that no span has taken.
@@ -480,7 +486,7 @@ pub const Context = struct {
         const gpu_points = try rebuiltList(draw_list.PointGpu, next, self.gpu_points);
         const shape_args = try rebuiltList(draw_list.ShapeArgs, next, self.shape_args);
         const quad_instances = try rebuiltList(draw_list.QuadInstance, next, self.quad_instances);
-        const layer_ops = try rebuiltList(@import("layer_stream.zig").Op, next, self.layer_ops);
+        const layer_ops = try rebuiltList(layer_stream.Op, next, self.layer_ops);
         self.states = states;
         self.commands = commands;
         self.cache.points = points;
@@ -551,7 +557,7 @@ pub const Context = struct {
     /// for a blend other than `.normal` with an operation other than `.source_over`, and for a
     /// mask; `InvalidBounds` for a bound not finite or past 2^52, or a rectangle whose corners are
     /// out of order; `OutOfMemory`.
-    pub fn beginLayer(self: *Context, begin: @import("layer_stream.zig").Begin) !void {
+    pub fn beginLayer(self: *Context, begin: layer_stream.Begin) !void {
         if (self.quad_batch_start != null) return error.OpenQuadBatch;
         if (!std.math.isFinite(begin.opacity) or begin.opacity < 0 or begin.opacity > 1) return error.InvalidOpacity;
         if (begin.blend == .unsupported or (begin.blend != .normal and begin.composite != .source_over) or begin.mask) return error.UnsupportedComposite;
@@ -1256,53 +1262,65 @@ pub const Context = struct {
         self.state().text_align = a;
     }
 
-    /// Sets the font `text` draws in, by the name it was loaded under.
-    pub fn fontFace(self: *Context, name: Atom) void {
-        self.state().font_name = name;
+    /// Sets the font `text` draws in.
+    pub fn fontFace(self: *Context, font: resources_api.Font) void {
+        self.state().font = font;
     }
 
-    /// The size of `str` in the font `name`: `w` the sum of its glyphs' advances, `h` the font's
-    /// pixel height, in the units the font was baked in. Letter spacing and the transform are not
-    /// counted. Codepoints the font lacks, and bytes that are not UTF-8, add nothing. Zero both
-    /// ways when the font is not loaded.
-    pub fn measureText(self: *const Context, name: Atom, str: []const u8) struct { w: f32, h: f32 } {
-        const provider = self.renderer.font_provider orelse return .{ .w = 0, .h = 0 };
-        const font = provider.get(name) orelse return .{ .w = 0, .h = 0 };
+    /// The loaded font text in `font` is drawn and measured in: `font` itself, or while it is not
+    /// loaded the engine's, after asking for `font` (`Renderer.askFont`) with its reply to
+    /// `redraw_inbox` when it has a file to load (`Font.askable`). Null when not even the engine's is loaded, or no host provides fonts. For
+    /// code that reads glyphs itself, as an icon centered by its ink; borrowed for the frame.
+    pub fn fontView(self: *const Context, font: resources_api.Font) ?resources_api.FontView {
+        const provider = self.renderer.font_provider orelse return null;
+        if (provider.get(font.name)) |found| {
+            if (self.renderer.asked_font_count != 0) self.renderer.forgetFont(font.name);
+            return found;
+        }
+        if (font.askable()) self.renderer.askFont(font, self.redraw_inbox);
+        return provider.get(resources_api.Font.engine.name);
+    }
+
+    /// The size of `str` in `font_wanted` (`fontView`): `w` the sum of its glyphs' advances, `h`
+    /// the font's pixel height, in the units the font was baked in. Letter spacing and the transform are not
+    /// counted. A codepoint the font lacks is measured from its fallback fonts
+    /// (`FontView.resolve`); one none has adds nothing. Bytes that are not UTF-8 are U+FFFD.
+    /// Zero both ways when not even the engine's font is loaded.
+    pub fn measureText(self: *const Context, font_wanted: resources_api.Font, str: []const u8) struct { w: f32, h: f32 } {
+        const font = self.fontView(font_wanted) orelse return .{ .w = 0, .h = 0 };
         var w: f32 = 0;
         var i: usize = 0;
         while (nextCodepointLossy(str, &i)) |cp| {
-            const glyph = font.glyph(cp) orelse continue;
-            w += glyph.xadvance;
+            const resolved = font.resolve(cp) orelse continue;
+            w += resolved.glyph.xadvance;
         }
         return .{ .w = w, .h = font.pixel_height };
     }
 
-    /// How far the font `name` reaches above the baseline: the highest of its glyphs with ink. Zero
-    /// when the font is not loaded. It looks at every glyph of the font on each call.
-    pub fn fontAscender(self: *const Context, name: Atom) f32 {
-        const provider = self.renderer.font_provider orelse return 0;
-        const font = provider.get(name) orelse return 0;
+    /// How far `font_wanted` (`fontView`) reaches above the baseline: the highest of its glyphs
+    /// with ink. Zero when not even the engine's font is loaded. It looks at every glyph of the
+    /// font on each call.
+    pub fn fontAscender(self: *const Context, font_wanted: resources_api.Font) f32 {
+        const font = self.fontView(font_wanted) orelse return 0;
         return font.metrics().ascender;
     }
 
-    /// The height of the font's capital letters above the baseline: its `H`'s. A font
-    /// without one, as an icon font, gives its ascender.
-    pub fn fontCapHeight(self: *const Context, name: Atom) f32 {
-        const provider = self.renderer.font_provider orelse return 0;
-        const font = provider.get(name) orelse return 0;
+    /// The height of `font_wanted`'s (`fontView`) capital letters above the baseline: its `H`'s.
+    /// A font without one, as an icon font, gives its ascender.
+    pub fn fontCapHeight(self: *const Context, font_wanted: resources_api.Font) f32 {
+        const font = self.fontView(font_wanted) orelse return 0;
         return font.metrics().cap_height;
     }
 
-    /// Where the baseline of a line of `name` goes, from the top of a box `box_height` tall,
+    /// Where the baseline of a line of `font_wanted` (`fontView`) goes, from the top of a box `box_height` tall,
     /// so its capital letters sit in the box's middle, as the eye centers text: a box laid
     /// out around a line is taller than its capitals by the room for descenders, and text set
     /// at its ascender sits high. A font without capitals,
     /// as an icon font, is set at its ascender, its glyphs already filling the box.
-    pub fn fontBaseline(self: *const Context, name: Atom, box_height: f32) f32 {
-        const provider = self.renderer.font_provider orelse return 0;
-        const font = provider.get(name) orelse return 0;
-        const capital = font.glyph('H') orelse return self.fontAscender(name);
-        if (capital.x0 == capital.x1) return self.fontAscender(name);
+    pub fn fontBaseline(self: *const Context, font_wanted: resources_api.Font, box_height: f32) f32 {
+        const font = self.fontView(font_wanted) orelse return 0;
+        const capital = font.glyph('H') orelse return self.fontAscender(font_wanted);
+        if (capital.x0 == capital.x1) return self.fontAscender(font_wanted);
         const cap_height = -capital.yoff;
         // Down to a whole pixel: of the two nearest, the higher reads as centered.
         return @floor((box_height + cap_height) / 2);
@@ -1311,14 +1329,14 @@ pub const Context = struct {
     /// How far `str`'s glyphs reach above the baseline (`top`, negative) and below it
     /// (`bottom`): what a label centered by its ink, as a badge's, is centered by. Zero for
     /// text with no ink.
-    pub fn textInk(self: *const Context, name: Atom, str: []const u8) struct { top: f32, bottom: f32 } {
-        const provider = self.renderer.font_provider orelse return .{ .top = 0, .bottom = 0 };
-        const font = provider.get(name) orelse return .{ .top = 0, .bottom = 0 };
+    pub fn textInk(self: *const Context, font_wanted: resources_api.Font, str: []const u8) struct { top: f32, bottom: f32 } {
+        const font = self.fontView(font_wanted) orelse return .{ .top = 0, .bottom = 0 };
         var top: f32 = std.math.inf(f32);
         var bottom: f32 = -std.math.inf(f32);
         var i: usize = 0;
         while (nextCodepointLossy(str, &i)) |cp| {
-            const glyph = font.glyph(cp) orelse continue;
+            const resolved = font.resolve(cp) orelse continue;
+            const glyph = resolved.glyph;
             if (glyph.x0 == glyph.x1) continue;
             const height: f32 = @floatFromInt(glyph.y1 - glyph.y0);
             top = @min(top, glyph.yoff);
@@ -1330,23 +1348,25 @@ pub const Context = struct {
 
     /// Draws `str` in the current font with the fill paint's inner color, its baseline at `y` and
     /// its start, center or end at `x` by the current alignment, and returns the x where the next
-    /// glyph would start. Each glyph is a quad from the font's atlas at the size it was baked,
-    /// placed by the current transform; under a transform that only translates, glyphs are set on
-    /// whole pixels while advances stay fractional. The scissor applies. Codepoints the font lacks
-    /// are skipped, as are bytes that are not UTF-8. With the font not loaded it draws nothing and
-    /// returns `x`; with no memory it returns where it stopped.
+    /// glyph would start. Each glyph is a quad from its atlas at the size it was baked, placed by
+    /// the current transform; under a transform that only translates, glyphs are set on whole
+    /// pixels while advances stay fractional. The scissor applies. A codepoint the font lacks is
+    /// drawn from its fallback fonts (`FontView.resolve`), a draw call for each run of glyphs
+    /// from one atlas, and one whose fallback atlas is not yet on the GPU only advances; one no
+    /// font has is skipped. Bytes that are not UTF-8 are U+FFFD. A font not loaded yet is drawn
+    /// in the engine's while it is asked for (`fontView`); with not even that loaded it draws
+    /// nothing and returns `x`; with no memory it returns where it stopped.
     pub fn text(self: *Context, x: f32, y: f32, str: []const u8) f32 {
         const s = self.state();
-        const provider = self.renderer.font_provider orelse return x;
-        const font = provider.get(s.font_name) orelse return x;
+        const font = self.fontView(s.font) orelse return x;
         const atlas_size: f32 = @floatFromInt(font_mod.kAtlasSize);
 
         var total_advance: f32 = 0;
         if (s.text_align.center or s.text_align.right) {
             var align_i: usize = 0;
             while (nextCodepointLossy(str, &align_i)) |cp| {
-                const bc = font.glyph(cp) orelse continue;
-                total_advance += bc.xadvance + s.letter_spacing;
+                const resolved = font.resolve(cp) orelse continue;
+                total_advance += resolved.glyph.xadvance + s.letter_spacing;
             }
         }
 
@@ -1354,19 +1374,22 @@ pub const Context = struct {
         if (s.text_align.center) cx -= total_advance * 0.5;
         if (s.text_align.right) cx -= total_advance;
 
-        var fill_color = s.fill.inner_color;
-        fill_color.a *= s.alpha;
-
-        const vert_base: u32 = @intCast(self.verts.items.len);
-
         // The atlas holds one texel per pixel, and a bilinear sample between pixels smears
         // each stem across two. Text drawn at atlas scale lands on whole pixels; advances
         // stay fractional so `measureText` still describes where the next glyph falls.
         const pixel_aligned = s.xform[0] == 1 and s.xform[1] == 0 and s.xform[2] == 0 and s.xform[3] == 1;
 
+        var run: TextRun = .{ .image = font.image, .vertex_offset = @intCast(self.verts.items.len) };
         var glyph_i: usize = 0;
         while (nextCodepointLossy(str, &glyph_i)) |cp| {
-            const bc = font.glyph(cp) orelse continue;
+            const resolved = font.resolve(cp) orelse continue;
+            const bc = resolved.glyph;
+            defer cx += bc.xadvance + s.letter_spacing;
+            if (resolved.image == 0) continue;
+            if (resolved.image != run.image) {
+                self.endTextRun(&run) catch return cx;
+                run = .{ .image = resolved.image, .vertex_offset = @intCast(self.verts.items.len), .uniform_offset = run.uniform_offset };
+            }
 
             const s0 = @as(f32, @floatFromInt(bc.x0)) / atlas_size;
             const t0 = @as(f32, @floatFromInt(bc.y0)) / atlas_size;
@@ -1398,42 +1421,34 @@ pub const Context = struct {
             self.verts.append(self.allocator(), .{ .x = tr[0], .y = tr[1], .u = s1, .v = t0 }) catch return cx;
             self.verts.append(self.allocator(), .{ .x = br[0], .y = br[1], .u = s1, .v = t1 }) catch return cx;
             self.verts.append(self.allocator(), .{ .x = bl[0], .y = bl[1], .u = s0, .v = t1 }) catch return cx;
-
-            cx += bc.xadvance + s.letter_spacing;
         }
+        self.endTextRun(&run) catch return cx;
+        return cx;
+    }
 
-        const vert_count: u32 = @intCast(self.verts.items.len - vert_base);
-        if (vert_count == 0) return cx;
+    /// The glyphs `text` has put down from one atlas since the run began.
+    const TextRun = struct {
+        image: u32,
+        vertex_offset: u32,
+        /// The text's paint, recorded by its first run that drew; every run of the text
+        /// shares it.
+        uniform_offset: ?u32 = null,
+    };
 
-        const scissor_rows = transform.toRows(s.scissor_xform);
-        const scissor_ext = s.scissor_extent;
-        const has_scissor = scissor_ext[0] > -0.5;
-        const fringe = self.fringe_width;
-        const scissor_scale: [2]f32 = if (has_scissor) .{
-            @sqrt(s.scissor_xform[0] * s.scissor_xform[0] + s.scissor_xform[2] * s.scissor_xform[2]) / fringe,
-            @sqrt(s.scissor_xform[1] * s.scissor_xform[1] + s.scissor_xform[3] * s.scissor_xform[3]) / fringe,
-        } else .{ 1, 1 };
+    /// Records the draw call of `run`'s glyphs, and the text's paint when no run has yet.
+    /// Records nothing for a run that put no glyph down.
+    fn endTextRun(self: *Context, run: *TextRun) error{OutOfMemory}!void {
+        const vert_count: u32 = @as(u32, @intCast(self.verts.items.len)) - run.vertex_offset;
+        if (vert_count == 0) return;
+        const uniform_offset = run.uniform_offset orelse try self.appendTextPaint();
+        run.uniform_offset = uniform_offset;
 
-        draw_list.requireAppendCapacity("roop.producer.uniform_limit", self.uniforms.items.len, 1, draw_list.kMaxUniformsPerFrame);
         draw_list.requireAppendCapacity("roop.producer.call_limit", self.calls.items.len, 1, draw_list.kMaxDrawCallsPerFrame);
-        const uniform_offset: u32 = @intCast(self.uniforms.items.len);
-        self.uniforms.append(self.allocator(), draw_list.PaintUniforms{
-            .scissorMat = scissor_rows,
-            .paintMat = transform.toRows(transform.identity()),
-            .innerCol = color_mod.toArray(fill_color),
-            .outerCol = color_mod.toArray(fill_color),
-            .scissorExt = if (has_scissor) scissor_ext else .{ 1e5, 1e5 },
-            .scissorScale = scissor_scale,
-            .scissorRadius = if (has_scissor) s.scissor_radius else 0,
-            .texType = 2,
-            .type = 3,
-        }) catch return cx;
-
-        self.calls.append(self.allocator(), draw_list.DrawCall{
+        try self.calls.append(self.allocator(), draw_list.DrawCall{
             .kind = .triangles,
-            .image = font.image,
+            .image = run.image,
             .uniform_offset = uniform_offset,
-            .vertex_offset = vert_base,
+            .vertex_offset = run.vertex_offset,
             .vertex_count = vert_count,
             .cover_offset = 0,
             .cover_count = 0,
@@ -1445,9 +1460,39 @@ pub const Context = struct {
             .extent = .{ 0, 0 },
             .radius = 0,
             .feather = 1,
-        }) catch return cx;
+        });
+    }
 
-        return cx;
+    /// Records the paint text is drawn with: the fill's inner color under the current alpha
+    /// and scissor, read from the atlas's coverage. Returns its offset.
+    fn appendTextPaint(self: *Context) error{OutOfMemory}!u32 {
+        const s = self.state();
+        var fill_color = s.fill.inner_color;
+        fill_color.a *= s.alpha;
+
+        const scissor_rows = transform.toRows(s.scissor_xform);
+        const scissor_ext = s.scissor_extent;
+        const has_scissor = scissor_ext[0] > -0.5;
+        const fringe = self.fringe_width;
+        const scissor_scale: [2]f32 = if (has_scissor) .{
+            @sqrt(s.scissor_xform[0] * s.scissor_xform[0] + s.scissor_xform[2] * s.scissor_xform[2]) / fringe,
+            @sqrt(s.scissor_xform[1] * s.scissor_xform[1] + s.scissor_xform[3] * s.scissor_xform[3]) / fringe,
+        } else .{ 1, 1 };
+
+        draw_list.requireAppendCapacity("roop.producer.uniform_limit", self.uniforms.items.len, 1, draw_list.kMaxUniformsPerFrame);
+        const uniform_offset: u32 = @intCast(self.uniforms.items.len);
+        try self.uniforms.append(self.allocator(), draw_list.PaintUniforms{
+            .scissorMat = scissor_rows,
+            .paintMat = transform.toRows(transform.identity()),
+            .innerCol = color_mod.toArray(fill_color),
+            .outerCol = color_mod.toArray(fill_color),
+            .scissorExt = if (has_scissor) scissor_ext else .{ 1e5, 1e5 },
+            .scissorScale = scissor_scale,
+            .scissorRadius = if (has_scissor) s.scissor_radius else 0,
+            .texType = 2,
+            .type = 3,
+        });
+        return uniform_offset;
     }
 
     fn appendPathCommand(self: *Context, command: path_mod.Command) void {
@@ -1747,6 +1792,7 @@ test "roop text uses listed and contiguous glyphs for measure alignment and draw
     var context: Context = undefined;
     context.lists = .wrap(&std.testing.allocator);
     context.renderer = &renderer;
+    context.redraw_inbox = sequencer.no_inbox;
     var states = [_]State{defaultState()};
     context.states = .{ .items = &states, .capacity = states.len };
     context.fringe_width = 1;
@@ -1757,7 +1803,7 @@ test "roop text uses listed and contiguous glyphs for measure alignment and draw
     defer context.calls.deinit(context.allocator());
     defer context.uniforms.deinit(context.allocator());
 
-    const measured = context.measureText(resources_api.kDefaultFontName, "\u{f01c0}?\u{f1225}");
+    const measured = context.measureText(resources_api.Font.engine, "\u{f01c0}?\u{f1225}");
     try std.testing.expectEqual(@as(f32, 24), measured.w);
     context.textAlign(.{ .center = true });
     try std.testing.expectEqual(@as(f32, 112), context.text(100, 20, "\u{f01c0}?\u{f1225}"));
@@ -1770,7 +1816,7 @@ test "roop text uses listed and contiguous glyphs for measure alignment and draw
 
     fixture.view.listed_codepoints = &.{};
     fixture.view.listed_chars = &.{};
-    const legacy_measure = context.measureText(resources_api.kDefaultFontName, " \u{f01c0}");
+    const legacy_measure = context.measureText(resources_api.Font.engine, " \u{f01c0}");
     try std.testing.expectEqual(@as(f32, 7), legacy_measure.w);
     context.textAlign(.{ .left = true });
     try std.testing.expectEqual(@as(f32, 107), context.text(100, 20, " \u{f01c0}"));
@@ -1790,7 +1836,7 @@ test "roop text uses listed and contiguous glyphs for measure alignment and draw
     try std.testing.expectEqual(@as(f32, 20.5), context.verts.items[scaled].x);
 }
 
-test "text recorded with a font that has not loaded records nothing" {
+test "text recorded while not even the engine's font has loaded records nothing" {
     const Unloaded = struct {
         fn get(_: *anyopaque, _: *const resources_api.ScopeId, _: Atom, _: *resources_api.FontView) callconv(.c) bool {
             return false;
@@ -1808,6 +1854,38 @@ test "text recorded with a font that has not loaded records nothing" {
     try std.testing.expectEqual(@as(usize, 0), ctx.calls.items.len);
     try std.testing.expectEqual(@as(usize, 0), ctx.verts.items.len);
     try std.testing.expectEqual(@as(usize, 0), ctx.uniforms.items.len);
+}
+
+test "text in a font not loaded yet is measured and drawn in the engine's font" {
+    const EngineOnly = struct {
+        view: resources_api.FontView,
+        fn get(raw: *anyopaque, _: *const resources_api.ScopeId, name: Atom, font: *resources_api.FontView) callconv(.c) bool {
+            if (name != resources_api.Font.engine.name) return false;
+            const fixture: *@This() = @ptrCast(@alignCast(raw));
+            font.* = fixture.view;
+            return true;
+        }
+    };
+    var ascii = std.mem.zeroes(font_mod.BakedChars);
+    const glyph = &ascii['a' - font_mod.kFirstChar];
+    glyph.x1 = 5;
+    glyph.y1 = 7;
+    glyph.xadvance = 9;
+    var fixture: EngineOnly = .{ .view = .{ .baked_chars = &ascii, .pixel_height = 18, .image = 1, .first_char = font_mod.kFirstChar } };
+    var renderer: Renderer = .{ .font_provider = .{ .context = &fixture, .scope = .{ .atom = resources_api.kApplicationScope, .generation = 1 }, .get_fn = EngineOnly.get } };
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const lists = arena.allocator();
+    var ctx = try Context.initWithoutTarget(&renderer, &lists);
+    ctx.beginFrame(64, 64, 1, .wrap(&lists));
+
+    const wanted = comptime resources_api.Font.init(.{ .plugin = "test", .path = "fonts/x.ttf", .pixel_height = 30 });
+    const measured = ctx.measureText(wanted, "aa");
+    try std.testing.expectEqual(@as(f32, 18), measured.h);
+    try std.testing.expectEqual(@as(f32, 18), measured.w);
+    ctx.fontFace(wanted);
+    try std.testing.expectEqual(@as(f32, 18), ctx.text(0, 20, "aa"));
+    try std.testing.expect(ctx.verts.items.len != 0);
 }
 
 test "text with a codepoint the font lacks skips that glyph" {

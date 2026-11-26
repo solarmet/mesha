@@ -21,7 +21,7 @@
 //!     var tree = try ui.Tree.init(frame_scratch, atoms, transient.elementCount(&menu));
 //!     transient.record(&tree, &menu, &state, transient.default_style);
 //!     const menu_height = transient.height(&menu, line_height);
-//!     tree.commit(.{ .root_size = .{ .x = width, .y = menu_height } }, ctx, null);
+//!     tree.commit(.{ .root_size = .{ .x = width, .y = menu_height } }, ctx, null, inboxOf(system));
 //!
 //! Items are found by their position: item i is the i-th item counting through the groups in
 //! order, at most `max_items` in a menu. A menu with more, an empty key or one longer than
@@ -29,9 +29,14 @@
 //! error, which every function here asserts in a safe build. Nothing here allocates, interns or
 //! touches a table; nothing drawn takes the pointer.
 const std = @import("std");
-const Atom = @import("../core/atom.zig").Atom;
+const Atom = atom.Atom;
 const roop = @import("../systems/roop.zig");
 const ui = @import("ui.zig");
+const atom = @import("../core/atom.zig");
+const memory = @import("../core/memory.zig");
+const math = @import("../core/math.zig");
+const resources = @import("../systems/resources.zig");
+const font = @import("../systems/font.zig");
 
 /// What choosing an item does.
 pub const Kind = enum(u8) {
@@ -315,7 +320,7 @@ pub fn writeArguments(menu: *const Menu, state: *const State, separator: u8, wri
 /// plugin without one.
 pub const Style = struct {
     /// The name of the font every line is drawn in.
-    font: Atom,
+    font: roop.Font,
     /// The colour of an item's key and of the keys typed so far.
     key: ui.Color,
     /// The colour of the menu's title, an item's label, and the argument of an item that is off.
@@ -716,7 +721,6 @@ test "a ninth value is refused" {
 }
 
 test "record records the menu within elementCount, balanced" {
-    const memory = @import("../core/memory.zig");
     var mem: memory.Memory = undefined;
     mem.init(std.testing.allocator);
     defer mem.deinit();
@@ -736,10 +740,6 @@ test "record records the menu within elementCount, balanced" {
 }
 
 test "record lays the menu out height tall" {
-    const math = @import("../core/math.zig");
-    const memory = @import("../core/memory.zig");
-    const resources = @import("../systems/resources.zig");
-    const font = @import("../systems/font.zig");
     const Fixture = struct {
         view: resources.FontView,
         fn get(raw: *anyopaque, _: *const resources.ScopeId, _: Atom, view: *resources.FontView) callconv(.c) bool {
@@ -785,6 +785,6 @@ test "record lays the menu out height tall" {
     record(&tree, &test_menu, &state, default_style);
     tree.custom(Atom.from("test.probe"), &probe, .{ .size = .{ .w = .{ .fixed = 1 }, .h = .{ .fixed = 1 } } });
     tree.endRect();
-    tree.commit(.{ .root_size = .{ .x = 800, .y = 600 } }, &ctx, null);
+    tree.commit(.{ .root_size = .{ .x = 800, .y = 600 } }, &ctx, null, ui.no_inbox);
     try std.testing.expectEqual(height(&test_menu, line_height), probe.top);
 }

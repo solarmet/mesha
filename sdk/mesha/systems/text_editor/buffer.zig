@@ -556,18 +556,33 @@ pub const View = struct {
         return true;
     }
 
-    /// The cell `offset` is in on its line, from 0: one cell for each codepoint before it, a tab
-    /// running to the next multiple of `tab_width`, which must not be 0.
+    /// The cell `offset` is in on its line, from 0: `cellsOf` cells for each codepoint before it,
+    /// a tab running to the next multiple of `tab_width`, which must not be 0.
     pub fn columnOf(view: *const View, offset: u32, tab_width: u32) u32 {
         const line_index = view.lineOf(offset);
         var position = view.lineStart(line_index);
         var column: u32 = 0;
         while (position < offset) {
-            const byte = view.byteAt(position);
-            column = columnAfter(column, byte, tab_width);
-            position += codepointLength(byte);
+            const length = view.codepointLengthAt(position);
+            column = columnAfter(column, view.codepointAt(position, length), tab_width);
+            position += length;
         }
         return column;
+    }
+
+    /// The bytes of the codepoint at `offset`, which is in the text: as its first byte says,
+    /// cut at the text's end.
+    fn codepointLengthAt(view: *const View, offset: u32) u32 {
+        const length = codepointLength(view.byteAt(offset));
+        return @min(length, view.byteCount() - offset);
+    }
+
+    /// The codepoint of the `length` bytes at `offset`; U+FFFD when they are not one.
+    fn codepointAt(view: *const View, offset: u32, length: u32) u21 {
+        var bytes: [4]u8 = undefined;
+        for (0..length) |index| bytes[index] = view.byteAt(offset + @as(u32, @intCast(index)));
+        if (length == 1) return bytes[0];
+        return std.unicode.utf8Decode(bytes[0..length]) catch std.unicode.replacement_character;
     }
 
     /// The offset of the cell at `column` on the line, or the line's end when it is shorter. A
@@ -578,11 +593,11 @@ pub const View = struct {
         var position = view.lineStart(line_index);
         var reached: u32 = 0;
         while (position < end) {
-            const byte = view.byteAt(position);
-            const next = columnAfter(reached, byte, tab_width);
+            const length = view.codepointLengthAt(position);
+            const next = columnAfter(reached, view.codepointAt(position, length), tab_width);
             if (next > column) break;
             reached = next;
-            position += codepointLength(byte);
+            position += length;
         }
         return @min(position, end);
     }
@@ -608,9 +623,40 @@ fn indexOfFolded(haystack: []const u8, needle: []const u8, from: usize, fold: bo
     return null;
 }
 
-fn columnAfter(column: u32, byte: u8, tab_width: u32) u32 {
-    if (byte != '\t') return column + 1;
+fn columnAfter(column: u32, codepoint: u21, tab_width: u32) u32 {
+    if (codepoint != '\t') return column + cellsOf(codepoint);
     return column + tab_width - column % tab_width;
+}
+
+/// How many cells of a monospace line `codepoint` takes: 2 for the East Asian wide and
+/// fullwidth characters (the CJK ideographs, kana, Hangul, fullwidth forms, most emoji), as a
+/// terminal draws them, else 1. A tab is counted by its stop, not here.
+pub fn cellsOf(codepoint: u21) u32 {
+    const wide = switch (codepoint) {
+        0x1100...0x115F,
+        0x231A...0x231B,
+        0x2329...0x232A,
+        0x23E9...0x23EC,
+        0x2E80...0x303E,
+        0x3041...0x33FF,
+        0x3400...0x4DBF,
+        0x4E00...0x9FFF,
+        0xA000...0xA4CF,
+        0xA960...0xA97F,
+        0xAC00...0xD7A3,
+        0xF900...0xFAFF,
+        0xFE10...0xFE19,
+        0xFE30...0xFE6F,
+        0xFF00...0xFF60,
+        0xFFE0...0xFFE6,
+        0x1F300...0x1F64F,
+        0x1F900...0x1F9FF,
+        0x20000...0x2FFFD,
+        0x30000...0x3FFFD,
+        => true,
+        else => false,
+    };
+    return if (wide) 2 else 1;
 }
 
 /// The length a codepoint's first byte gives it. A stray continuation byte counts as one,

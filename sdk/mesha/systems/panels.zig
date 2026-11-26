@@ -2,14 +2,16 @@
 //! whole frame is its plugin's to draw, header and all. A panel opens to any side of the panel that
 //! asked for it, or along an edge of the window, splitting that space between them; a closed
 //! panel's sibling takes its parent's place. The boundary of each split drags to resize, and
-//! maximizing fills the window with the focused panel until it is restored or the focus leaves
-//! it.
+//! maximizing fills the whole window with the focused panel until it is restored or the focus
+//! leaves it. A gap of `kGap` keeps the panels apart and off the window's edges.
 //!
 //! One panel is focused at a time. Its owner, the system it belongs to, is the one whose local
 //! input subscriptions fire. The panels that had the focus before are kept, newest last
 //! (`panels_focus_history`): when the focused panel closes or is hidden the newest still open
 //! takes the focus, and `focus_previous` gives it to that one while the focused panel stays.
-//! Workspaces are arrangements their owner opens after activation, which closes every panel.
+//! A panel can take another's place (`replace`), keeping its size and the focus, as a file
+//! opened in a window replaces what the window showed. A declared panel replaced stays closed
+//! until its system declares it again (`panels_replaced`).
 //!
 //! What the panels system tells (`events.panels`, `plugin.panels.Event`): the focus moving
 //! (`dispatchFocusChanges`) and a panel's laid-out size changing (`dispatchResizes`).
@@ -64,6 +66,11 @@ pub const redraw_table_name = "panels_redraw";
 /// The hidden panels, a row each: a panel a `hide` request named stays closed, whatever
 /// declares it, until a `show` request names it. At most `kMaxPanels`.
 pub const hidden_table_name = "panels_hidden";
+/// The declared panels a `replace` closed, a row each with the declaration that stood when it
+/// did: `reconcile` does not open the panel again from that declaration, which its system,
+/// idle, may leave standing for frames. A row goes once that declaration has, as when its
+/// system runs again. At most `kMaxPanels`.
+pub const replaced_table_name = "panels_replaced";
 /// The panels that had the focus before the focused one, a row each, oldest first and newest
 /// last; a panel at most once, never the focused one, and none that closed. When the focused
 /// panel closes or is hidden, the newest still open takes the focus (`focusHistory`). At most
@@ -92,8 +99,9 @@ pub const kMaxPanels: usize = 32;
 pub const kMaxNodes: usize = 2 * kMaxPanels - 1;
 /// The widest and tallest window `relayout` takes, in pixels.
 pub const kMaxWindowExtent: f32 = @floatFromInt(std.math.maxInt(i32));
-/// The width of the space between panels, and around them when there are several, in pixels. The
-/// window's clear color shows through, and the focus glow fits inside it.
+/// The width of the space between panels and around them, a panel alone included, in pixels.
+/// The window's clear color shows through, and the focus glow fits inside it. A maximized panel
+/// has none.
 pub const kGap: f32 = 8;
 /// The least a split leaves either side, in pixels, while the space allows it.
 pub const kMinExtent: f32 = 120;
@@ -316,6 +324,23 @@ pub const Tree = struct {
         tree.nodes[leaf] = .{};
     }
 
+    /// Puts the panel `request` describes in the place of the open panel `id`, which closes:
+    /// the new leaf takes `id`'s node, so its share of its split, and `id`'s maximize. A panel
+    /// of `request.id` already open leaves its own place first. Fails with `MissingPanel` when
+    /// `id` is not open and `InvalidPanel` for no id or no root; replacing a panel by itself
+    /// changes nothing.
+    pub fn replace(tree: *Tree, id: Atom, request: plugin.panels.Open) Error!void {
+        if (request.id == no_atom or request.root == no_atom) return error.InvalidPanel;
+        if (tree.find(id) == null) return error.MissingPanel;
+        if (request.id == id) return;
+        if (tree.find(request.id) != null) try tree.close(request.id);
+        // Closing the other may have moved `id`'s node into its parent's slot.
+        const index = tree.find(id).?;
+        const was_maximized = tree.maximized == id;
+        tree.nodes[index] = .{ .kind = .leaf, .id = request.id, .title = .from(request.title), .root = request.root, .owner = request.owner };
+        if (was_maximized) tree.maximized = request.id;
+    }
+
     /// Docks an open panel to `side` of `beside`, or of the window with `beside` none, keeping
     /// what it is and giving it half of the space it then splits. Fails with `MissingPanel` when
     /// either is not open; a panel moved beside itself stays where it is.
@@ -365,8 +390,8 @@ pub const Tree = struct {
     }
 
     /// Lays the tree out in `window`, writing every node's `frame`, with a gap around and between
-    /// panels when there are several. A maximized panel takes the window and the others none; a
-    /// maximized panel that is no longer open is forgotten.
+    /// the panels, one alone included. A maximized panel takes the whole window, gap and all, and
+    /// the others nothing; a maximized panel that is no longer open is forgotten.
     pub fn layout(tree: *Tree, window: Rect) void {
         for (&tree.nodes) |*node| node.frame = .{};
         if (tree.root == no_node) return;
@@ -377,8 +402,7 @@ pub const Tree = struct {
             }
             tree.maximized = no_atom;
         }
-        const area = if (tree.panelCount() > 1) inset(window, kGap) else window;
-        tree.place(tree.root, area);
+        tree.place(tree.root, inset(window, kGap));
     }
 
     fn place(tree: *Tree, index: u8, area: Rect) void {
@@ -491,11 +515,15 @@ pub const State = struct {
     /// 1 while a press focuses the panel under it and the focused panel is reported; 0 while a
     /// `disable_focus_clicks` request holds.
     focus_clicks_enabled: *u8,
+    /// A `plugin.panels.KeyboardPlace`: where the keyboard is while the focus is suspended;
+    /// `focused_panel` while it is not.
+    keyboard_place: *u8,
     /// The window's width in pixels, as `relayout` last had it.
     window_w: *f32,
     /// The window's height in pixels, as `relayout` last had it.
     window_h: *f32,
-    /// How much of the window's bottom the panels leave free, as for the editor's minibuffer.
+    /// How much of the window's bottom the panels leave free, as for the editor's minibuffer,
+    /// while no panel is maximized.
     reserved_bottom: *f32,
     /// The split whose boundary a drag holds, `no_node` without one.
     resize_node: *u8,
@@ -534,12 +562,13 @@ pub fn ensure(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables: *Table
     }
 
     var state_schema: Table.Schema = undefined;
-    try state_schema.init(allocator, atoms, 9);
+    try state_schema.init(allocator, atoms, 10);
     defer state_schema.deinit();
     state_schema.addField("root", u8, .int);
     state_schema.addField("focused", Atom, .atom);
     state_schema.addField("maximized", Atom, .atom);
     state_schema.addField("focus_clicks_enabled", u8, .int);
+    state_schema.addField("keyboard_place", u8, .int);
     state_schema.addField("window_w", f32, .int);
     state_schema.addField("window_h", f32, .int);
     state_schema.addField("reserved_bottom", f32, .int);
@@ -550,6 +579,7 @@ pub fn ensure(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables: *Table
         .focused = no_atom,
         .maximized = no_atom,
         .focus_clicks_enabled = @as(u8, 1),
+        .keyboard_place = @as(u8, @intFromEnum(plugin.panels.KeyboardPlace.focused_panel)),
         .window_w = @as(f32, 0),
         .window_h = @as(f32, 0),
         .reserved_bottom = @as(f32, 0),
@@ -568,6 +598,14 @@ pub fn ensure(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables: *Table
     defer hidden_schema.deinit();
     hidden_schema.addField("panel", Atom, .atom);
     _ = try tables.ensure(&hidden_schema, kMaxPanels, atoms.intern(hidden_table_name), .durable);
+
+    var replaced_schema: Table.Schema = undefined;
+    try replaced_schema.init(allocator, atoms, 3);
+    defer replaced_schema.deinit();
+    replaced_schema.addField("panel", Atom, .atom);
+    replaced_schema.addField("declaration_row", u32, .int);
+    replaced_schema.addField("declaration_generation", u32, .int);
+    _ = try tables.ensure(&replaced_schema, kMaxPanels, atoms.intern(replaced_table_name), .durable);
 
     var history_schema: Table.Schema = undefined;
     try history_schema.init(allocator, atoms, 1);
@@ -813,8 +851,9 @@ fn reach(tree: *const Tree, index: u8, reached: *[kMaxNodes]bool) ValidationErro
 
 /// Lays the stored panels out in `window`. The host calls it each frame with the drawable size.
 /// It records the size in `panels_state`, leaves `reserved_bottom` of the window's bottom free of
-/// panels, and restores the arrangement when the maximized panel is not the focused one. A size
-/// that is negative, not finite or past `kMaxWindowExtent` is ignored.
+/// panels unless one is maximized, which takes the whole window, and restores the arrangement
+/// when the maximized panel is not the focused one. A size that is negative, not finite or past
+/// `kMaxWindowExtent` is ignored.
 pub fn relayout(tables: *Table.Registry, atoms: *Atom.Registry, window: Rect) void {
     if (!std.math.isFinite(window.w) or !std.math.isFinite(window.h) or window.w < 0 or window.h < 0 or window.w > kMaxWindowExtent or window.h > kMaxWindowExtent) {
         Log.debug("ignoring invalid window size", .{});
@@ -823,16 +862,14 @@ pub fn relayout(tables: *Table.Registry, atoms: *Atom.Registry, window: Rect) vo
     const s = state(tables, atoms);
     s.window_w.* = window.w;
     s.window_h.* = window.h;
-    // The panels have the window less what is reserved along its bottom.
+    // The panels have the window less what is reserved along its bottom; a maximized panel
+    // has all of it.
     var area = window;
     area.h = @max(window.h - s.reserved_bottom.*, 0);
     var tree = load(tables, atoms);
-    tree.layout(area);
     // A maximized panel stays so only while it keeps the focus.
-    if (tree.maximized != no_atom and tree.maximized != s.focused.*) {
-        tree.maximized = no_atom;
-        tree.layout(area);
-    }
+    if (tree.maximized != no_atom and tree.maximized != s.focused.*) tree.maximized = no_atom;
+    tree.layout(if (tree.maximized != no_atom) window else area);
     store(tables, atoms, &tree);
 }
 
@@ -875,6 +912,14 @@ pub fn isOpen(tables: *Table.Registry, atoms: *Atom.Registry, id: Atom) bool {
 /// Whether `id` has the focus, and so the keyboard.
 pub fn hasFocus(tables: *Table.Registry, atoms: *Atom.Registry, id: Atom) bool {
     return id != no_atom and focusedTarget(tables, atoms).id == id;
+}
+
+/// Whether the keyboard is lent outside the panels while the focus is suspended, as to the
+/// editor's minibuffer (`plugin.panels.KeyboardPlace.outside_panels`).
+pub fn keyboardOutsidePanels(tables: *Table.Registry, atoms: *Atom.Registry) bool {
+    const s = state(tables, atoms);
+    const outside = @intFromEnum(plugin.panels.KeyboardPlace.outside_panels);
+    return s.focus_clicks_enabled.* == 0 and s.keyboard_place.* == outside;
 }
 
 /// Whether the panel `id` fills the window.
@@ -1079,8 +1124,14 @@ fn apply(tables: *Table.Registry, atoms: *Atom.Registry, cmd: plugin.panels.CmdP
         .toggle_maximize => {
             tree.maximized = if (tree.maximized != no_atom) no_atom else s.focused.*;
         },
-        .enable_focus_clicks => s.focus_clicks_enabled.* = 1,
-        .disable_focus_clicks => s.focus_clicks_enabled.* = 0,
+        .enable_focus_clicks => {
+            s.focus_clicks_enabled.* = 1;
+            s.keyboard_place.* = @intFromEnum(plugin.panels.KeyboardPlace.focused_panel);
+        },
+        .disable_focus_clicks => |request| {
+            s.focus_clicks_enabled.* = 0;
+            s.keyboard_place.* = @intFromEnum(request.keyboard);
+        },
         .reserve_bottom => |request| {
             const height_valid = std.math.isFinite(request.height) and request.height >= 0;
             if (!height_valid) return error.InvalidReserve;
@@ -1089,6 +1140,15 @@ fn apply(tables: *Table.Registry, atoms: *Atom.Registry, cmd: plugin.panels.CmdP
         // Only the mark changes here: `reconcile` closes and opens by it.
         .hide => |request| return setHidden(tables, atoms, request.id, .hidden),
         .show => |request| return setHidden(tables, atoms, request.id, .shown),
+        // A panel declared but not open is placed by `reconcile`; here `by` is open already.
+        .replace => |request| {
+            const by_index = tree.find(request.by) orelse return error.MissingPanel;
+            const by = tree.nodes[by_index];
+            const had_focus = s.focused.* == request.id;
+            try tree.replace(request.id, .{ .id = by.id, .title = by.title.slice(), .root = by.root, .owner = by.owner });
+            tree.nodes[tree.find(by.id).?].declared_by = by.declared_by;
+            if (had_focus) moveFocus(tables, atoms, &tree, by.id);
+        },
     }
     settle(tables, atoms, &tree);
 }
@@ -1139,8 +1199,9 @@ pub const Applied = struct {
 
 /// The panels system's part of a frame, after the systems have run: every panel closes if a
 /// request says so (`close_all`) and the panels asked hidden or shown are marked (`hide`,
-/// `show`), then the panels the systems declare open and close (`reconcile`), then the other
-/// requests are applied in order, and all of them are forgotten. So an arrangement asked for
+/// `show`), then the panels the systems declare open and close (`reconcile`), a declared panel
+/// a `replace` names opening in the place it asks, then the other requests are applied in
+/// order, and all of them are forgotten. So an arrangement asked for
 /// afresh is laid out in the frame that asks, from what is declared in it and not hidden,
 /// and a request may name a panel declared in the same frame. The host's panels system calls
 /// it after each dispatch.
@@ -1159,20 +1220,105 @@ pub fn applyFrame(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *A
     reconcile(memory, tables, atoms);
     var rows = requests.iterate();
     while (rows.next()) |request| {
-        const applied_already = request == .close_all or request == .hide or request == .show;
+        var applied_already = request == .close_all or request == .hide or request == .show;
+        // `reconcile` put a declared `by` in `id`'s place: `id` is gone.
+        if (request == .replace and !isOpen(tables, atoms, request.replace.id)) applied_already = true;
         if (!applied_already) applyCmd(tables, atoms, request);
+    }
+    var replaced = requests.iterate();
+    while (replaced.next()) |request| {
+        if (request != .replace) continue;
+        if (isOpen(tables, atoms, request.replace.id)) continue;
+        noteReplaced(memory, tables, atoms, request.replace.id);
     }
     requests.reset();
     return applied;
 }
 
+/// The row of the first declaration that names `id`; null when none does.
+fn standingDeclaration(memory: *memory_mod.Memory, tables: *Table.Registry, id: Atom) ?Table.RowHandle {
+    var rows = plugin.panels.Declared.of(memory, tables, plugin.panels.declared_table_name).iterate();
+    while (rows.next()) |declared| {
+        if (declared.id == id) return rows.row;
+    }
+    return null;
+}
+
+/// Records that the declared panel `id`, which a `replace` closed, is not to open again from the
+/// declaration standing now (`panels_replaced`). Nothing for a panel no declaration names.
+fn noteReplaced(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *Atom.Registry, id: Atom) void {
+    const table = tables.findByName(atoms.intern(replaced_table_name)) orelse return;
+    const declaration = standingDeclaration(memory, tables, id) orelse return;
+    const handle = table.alloc() catch {
+        Log.warn("panel {s} may open again: too many replaced", .{atoms.lookup(id) orelse ""});
+        return;
+    };
+    const schema = table.getSchema();
+    table.getField(Atom, handle, "panel").?.* = id;
+    table.getField(u32, handle, "declaration_row").?.* = declaration.row;
+    table.getField(u32, handle, "declaration_generation").?.* = declaration.generation;
+    for ([_][]const u8{ "panel", "declaration_row", "declaration_generation" }) |field| {
+        table.setFieldPresent(handle, @intCast(schema.fieldIndex(field).?));
+    }
+}
+
+/// Forgets each replaced panel whose declaration no longer stands: its system ran again, and
+/// what it declares now is followed.
+fn forgetStaleReplacements(tables: *Table.Registry, atoms: *Atom.Registry) void {
+    const table = tables.findByName(atoms.intern(replaced_table_name)) orelse return;
+    const declarations = tables.findByName(atoms.intern(plugin.panels.declared_table_name));
+    var stale: [kMaxPanels]Table.RowHandle = undefined;
+    var stale_count: usize = 0;
+    var rows = table.rows();
+    while (rows.next()) |handle| {
+        const row = table.getField(u32, handle, "declaration_row").?.*;
+        const generation = table.getField(u32, handle, "declaration_generation").?.*;
+        const standing = if (declarations) |declared| declared.isAllocated(row) and declared.rowGeneration(row) == generation else false;
+        if (standing or stale_count == stale.len) continue;
+        stale[stale_count] = handle;
+        stale_count += 1;
+    }
+    for (stale[0..stale_count]) |handle| table.free(handle);
+}
+
+/// Whether a `replace` closed the declared panel `id`, and the declaration that stood then
+/// stands still: its system has not run since. A system that declares `id` from a row of its
+/// own drops that row as it next runs, as a window replaced by a file opened in it goes.
+pub fn wasReplaced(tables: *Table.Registry, atoms: *Atom.Registry, id: Atom) bool {
+    const table = tables.findByName(atoms.intern(replaced_table_name)) orelse return false;
+    var rows = table.rows();
+    while (rows.next()) |handle| {
+        if (table.getField(Atom, handle, "panel").?.* == id) return true;
+    }
+    return false;
+}
+
+/// Whether `declaration`, a row of declarations naming `id`, is the one that stood when a
+/// `replace` closed `id`, so it opens nothing.
+fn replacedUnder(tables: *Table.Registry, atoms: *Atom.Registry, id: Atom, declaration: Table.RowHandle) bool {
+    const table = tables.findByName(atoms.intern(replaced_table_name)) orelse return false;
+    var rows = table.rows();
+    while (rows.next()) |handle| {
+        if (table.getField(Atom, handle, "panel").?.* != id) continue;
+        const row = table.getField(u32, handle, "declaration_row").?.*;
+        const generation = table.getField(u32, handle, "declaration_generation").?.*;
+        if (row == declaration.row and generation == declaration.generation) return true;
+    }
+    return false;
+}
+
 /// Brings the arrangement in step with `subscribed.panels`, the panels the systems declare
 /// (`plugin.panels.declare`); `applyFrame` calls it before it applies the requests.
 ///
-/// A hidden panel (`isHidden`) is closed and stays closed, whatever declares it. Any other
+/// A hidden panel (`isHidden`) is closed and stays closed, whatever declares it; one a
+/// `replace` of the frame names is replaced instead, as a panel hidden to make way for another. Any other
 /// declared panel that is not open opens by its declaration's placement, along the window's
 /// edge when the panel it names to open beside is not open, taking the focus when its
-/// declaration says so or when it is the only panel. One that is open keeps its place and takes
+/// declaration says so or when it is the only panel; one a `replace` request of the frame
+/// names as `by` opens in the place of the open panel it names instead (`Tree.replace`),
+/// taking the focus when that panel had it. A panel a `replace` closed does not open from the
+/// declaration that stood when it closed (`panels_replaced`), only once its system declares
+/// it again. One that is open keeps its place and takes
 /// its declaration's title, root and owner. A panel a declaration opened closes once no
 /// row declares it and the system that declared it has run since the subscriptions were last
 /// reset: until then, as while its plugin is being loaded again, its rows are only missing,
@@ -1181,10 +1327,13 @@ pub fn applyFrame(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *A
 /// The first row for an id is followed and a later one logged; a panel that cannot open (see
 /// `Error`) is logged each frame it is declared.
 pub fn reconcile(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *Atom.Registry) void {
+    forgetStaleReplacements(tables, atoms);
     var tree = load(tables, atoms);
     var changed = false;
     var declared_ids: [kMaxPanels]Atom = undefined;
     var declared_count: usize = 0;
+    var replacements: [kMaxPanels]Replacement = undefined;
+    const replacing = replacementsAsked(memory, tables, &replacements);
     var rows = plugin.panels.Declared.of(memory, tables, plugin.panels.declared_table_name).iterate();
     while (rows.next()) |declared| {
         const already_declared = std.mem.indexOfScalar(Atom, declared_ids[0..declared_count], declared.id) != null;
@@ -1194,6 +1343,11 @@ pub fn reconcile(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *At
         }
         const declarer = rows.subscriber();
         if (isHidden(tables, atoms, declared.id)) {
+            // One a `replace` of the frame names goes as its `by` takes its place.
+            const being_replaced = for (replacing) |replacement| {
+                if (replacement.id == declared.id) break true;
+            } else false;
+            if (being_replaced) continue;
             if (tree.find(declared.id) != null) {
                 tree.close(declared.id) catch {};
                 changed = true;
@@ -1211,16 +1365,29 @@ pub fn reconcile(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *At
                 node.declared_by = declarer;
                 changed = true;
             }
+        } else if (replacedUnder(tables, atoms, declared.id, rows.row.?)) {
+            // A `replace` closed it, and its system has not declared it again since.
+            continue;
         } else {
-            // What it would open beside may have closed since its system chose it.
-            var placed = declared;
-            if (placed.beside != no_atom and tree.find(placed.beside) == null) placed.beside = no_atom;
-            tree.open(placed) catch |err| {
-                Log.warn("declared panel {s} did not open: {s}", .{ atoms.lookup(declared.id) orelse "", @errorName(err) });
-                continue;
-            };
+            const replaced = replacedBy(replacing, &tree, declared.id);
+            if (replaced) |id| {
+                const had_focus = state(tables, atoms).focused.* == id;
+                tree.replace(id, declared) catch |err| {
+                    Log.warn("declared panel {s} did not open: {s}", .{ atoms.lookup(declared.id) orelse "", @errorName(err) });
+                    continue;
+                };
+                if (had_focus or declared.focus == .take) moveFocus(tables, atoms, &tree, declared.id);
+            } else {
+                // What it would open beside may have closed since its system chose it.
+                var placed = declared;
+                if (placed.beside != no_atom and tree.find(placed.beside) == null) placed.beside = no_atom;
+                tree.open(placed) catch |err| {
+                    Log.warn("declared panel {s} did not open: {s}", .{ atoms.lookup(declared.id) orelse "", @errorName(err) });
+                    continue;
+                };
+                if (declared.focus == .take or tree.panelCount() == 1) moveFocus(tables, atoms, &tree, declared.id);
+            }
             tree.nodes[tree.find(declared.id).?].declared_by = declarer;
-            if (declared.focus == .take or tree.panelCount() == 1) moveFocus(tables, atoms, &tree, declared.id);
             changed = true;
         }
         if (declared_count < declared_ids.len) {
@@ -1240,6 +1407,36 @@ pub fn reconcile(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *At
         changed = true;
     }
     if (changed) settle(tables, atoms, &tree);
+}
+
+/// A `replace` request of the frame: `by` is to open in the place of `id`.
+const Replacement = struct { id: Atom, by: Atom };
+
+/// The frame's `replace` requests, written to `out`, in the order asked.
+fn replacementsAsked(memory: *memory_mod.Memory, tables: *Table.Registry, out: *[kMaxPanels]Replacement) []Replacement {
+    var count: usize = 0;
+    var asked = Requests.of(memory, tables, plugin.panels.commands_table_name).iterate();
+    while (asked.next()) |request| {
+        const wanted = switch (request) {
+            .replace => |replacement| replacement,
+            else => continue,
+        };
+        if (count == out.len) break;
+        out[count] = .{ .id = wanted.id, .by = wanted.by };
+        count += 1;
+    }
+    return out[0..count];
+}
+
+/// The open panel `by`, not open itself, is to replace: the first of `replacing` that names it
+/// and whose panel is open in `tree`; null for none.
+fn replacedBy(replacing: []const Replacement, tree: *const Tree, by: Atom) ?Atom {
+    for (replacing) |replacement| {
+        if (replacement.by != by) continue;
+        if (tree.find(replacement.id) == null) continue;
+        return replacement.id;
+    }
+    return null;
 }
 
 /// Publishes to `events.panels` that the focus moved since `previous`, which it then records; the
@@ -1358,8 +1555,8 @@ test "a panel opens to any side of the one asking, splitting its space" {
     var tree: Tree = .{};
     try openTest(&tree, "stage", "", .right);
     tree.layout(test_window);
-    // Alone, the stage takes the test_window.
-    try testing.expectEqual(test_window, frameOf(&tree, "stage"));
+    // Alone, the stage takes the test_window less the gap around it.
+    try testing.expectEqual(inset(test_window, kGap), frameOf(&tree, "stage"));
     try openTest(&tree, "layers", "stage", .left);
     try openTest(&tree, "timeline", "stage", .bottom);
     tree.layout(test_window);
@@ -1503,7 +1700,7 @@ test "commands keep the stored tree, its focus and its owners" {
     try testing.expect(onMousePress(&fx.tables, &fx.atoms, stage_frame.x + 10, stage_frame.y + 10));
     try testing.expectEqual(Owner.game, focusedOwner(&fx.tables, &fx.atoms).?);
     // Suspended focus clicks leave nothing focused for input.
-    fx.command(.disable_focus_clicks);
+    fx.command(.{ .disable_focus_clicks = .{} });
     try testing.expectEqual(@as(?Owner, null), focusedOwner(&fx.tables, &fx.atoms));
     fx.command(.enable_focus_clicks);
     // Closing the focused panel moves the focus to one still open.
@@ -1654,6 +1851,77 @@ test "a hidden panel closes and stays closed while it is declared, until it is s
     reconcile(&fx.mem, &fx.tables, &fx.atoms);
     try testing.expect(isOpen(&fx.tables, &fx.atoms, layers));
     try testing.expectEqual(@as(usize, 0), hiddenPanels(&fx.tables, &fx.atoms, &hidden).len);
+}
+
+test "a replace puts a panel in another's place, with its share and the focus" {
+    var fx: Fixture = .{};
+    try fx.init();
+    defer fx.deinit();
+    const owner = Atom.from("replace_test_owner");
+    const left = Atom.from("left");
+    const text = Atom.from("text");
+    const stage = Atom.from("figure_stage");
+    const left_panel: plugin.panels.Open = .{ .id = left, .root = left };
+    const text_panel: plugin.panels.Open = .{ .id = text, .root = text, .beside = left, .side = .right, .share = 0.7 };
+    // Declared beside nothing it would open along the window's top edge.
+    const stage_panel: plugin.panels.Open = .{ .id = stage, .root = stage, .side = .top, .share = 0.2, .focus = .keep };
+    try declareAs(&fx, owner, &.{ left_panel, text_panel });
+    reconcile(&fx.mem, &fx.tables, &fx.atoms);
+    fx.command(.{ .focus = .{ .id = text } });
+    const text_frame = panelFor(&fx.tables, &fx.atoms, text).?.frame;
+
+    // Declared in the frame that asks: it opens where the text window was, and the text
+    // window, no longer declared, is gone.
+    try declareAs(&fx, owner, &.{ left_panel, stage_panel });
+    plugin.panels.request(&fx.mem, &fx.tables, .{ .replace = .{ .id = text, .by = stage } });
+    _ = applyFrame(&fx.mem, &fx.tables, &fx.atoms);
+    try testing.expect(!isOpen(&fx.tables, &fx.atoms, text));
+    try testing.expectEqual(text_frame, panelFor(&fx.tables, &fx.atoms, stage).?.frame);
+    try testing.expectEqual(stage, focusedTarget(&fx.tables, &fx.atoms).id);
+    try testing.expectEqual(@as(usize, 2), load(&fx.tables, &fx.atoms).panelCount());
+
+    // One already open leaves its place for the other's: the left panel takes the stage's.
+    plugin.panels.request(&fx.mem, &fx.tables, .{ .replace = .{ .id = stage, .by = left } });
+    try declareAs(&fx, owner, &.{left_panel});
+    _ = applyFrame(&fx.mem, &fx.tables, &fx.atoms);
+    try testing.expect(!isOpen(&fx.tables, &fx.atoms, stage));
+    try testing.expectEqual(left, focusedTarget(&fx.tables, &fx.atoms).id);
+    try testing.expectEqual(@as(usize, 1), load(&fx.tables, &fx.atoms).panelCount());
+    try validateOwnerState(&fx.tables, &fx.atoms);
+
+    // A panel not open is not replaced: the request changes nothing.
+    plugin.panels.request(&fx.mem, &fx.tables, .{ .replace = .{ .id = text, .by = left } });
+    _ = applyFrame(&fx.mem, &fx.tables, &fx.atoms);
+    try testing.expect(isOpen(&fx.tables, &fx.atoms, left));
+}
+
+test "a declared panel a replace closed stays closed until its system declares it again" {
+    var fx: Fixture = .{};
+    try fx.init();
+    defer fx.deinit();
+    const owner = Atom.from("replace_test_owner");
+    const text = Atom.from("text");
+    const stage = Atom.from("figure_stage");
+    const text_panel: plugin.panels.Open = .{ .id = text, .root = text };
+    const stage_panel: plugin.panels.Open = .{ .id = stage, .root = stage };
+    try declareAs(&fx, owner, &.{text_panel});
+    reconcile(&fx.mem, &fx.tables, &fx.atoms);
+    try testing.expect(isOpen(&fx.tables, &fx.atoms, text));
+
+    // The text window's declaration still stands as the stage takes its place.
+    try declareAs(&fx, owner, &.{ text_panel, stage_panel });
+    plugin.panels.request(&fx.mem, &fx.tables, .{ .replace = .{ .id = text, .by = stage } });
+    _ = applyFrame(&fx.mem, &fx.tables, &fx.atoms);
+    try testing.expect(!isOpen(&fx.tables, &fx.atoms, text));
+    // Its system idle, the declaration stands frame after frame, and opens nothing.
+    for (0..3) |_| _ = applyFrame(&fx.mem, &fx.tables, &fx.atoms);
+    try testing.expect(!isOpen(&fx.tables, &fx.atoms, text));
+    try testing.expect(isOpen(&fx.tables, &fx.atoms, stage));
+
+    // Declared again by a run of its system, it opens.
+    try declareAs(&fx, owner, &.{ text_panel, stage_panel });
+    _ = applyFrame(&fx.mem, &fx.tables, &fx.atoms);
+    try testing.expect(isOpen(&fx.tables, &fx.atoms, text));
 }
 
 /// Opens `ids` in a row, left to right, each taking the focus as it opens.
@@ -1891,4 +2159,21 @@ test "a maximized panel gives the focus back when it leaves" {
     relayout(&fx.tables, &fx.atoms, test_window);
     try testing.expect(!isMaximized(&fx.tables, &fx.atoms, layers));
     try testing.expect(!panelFor(&fx.tables, &fx.atoms, stage).?.frame.empty());
+}
+
+test "a maximized panel takes the whole window, the room reserved at its bottom included" {
+    var fx: Fixture = .{};
+    try fx.init();
+    defer fx.deinit();
+    const stage = Atom.from("stage");
+    openNow(&fx.tables, &fx.atoms, .{ .id = stage, .root = stage });
+    fx.command(.{ .reserve_bottom = .{ .height = 40 } });
+    relayout(&fx.tables, &fx.atoms, test_window);
+    // Alone, the panel keeps the gap around it and leaves the reserved room.
+    const kept = panelFor(&fx.tables, &fx.atoms, stage).?.frame;
+    try testing.expectEqual(kGap, kept.x);
+    try testing.expectEqual(test_window.h - 40 - 2 * kGap, kept.h);
+    fx.command(.toggle_maximize);
+    relayout(&fx.tables, &fx.atoms, test_window);
+    try testing.expectEqual(test_window, panelFor(&fx.tables, &fx.atoms, stage).?.frame);
 }

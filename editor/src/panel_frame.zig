@@ -13,15 +13,18 @@ const panels_mod = mesha.panels;
 const plugin = mesha.plugin;
 const roop = mesha.roop;
 const state = @import("state.zig");
-const workspaces = @import("workspaces.zig");
+const fixed_panels = @import("fixed_panels.zig");
+const editor_sequencer = @import("editor_sequencer.zig");
 
 /// The most elements a panel adds to its header.
 const added_commands = 64;
 
-/// Whether the panel `id` wears a header where it is. The figure canvas wears none while it
-/// is the only panel the window shows; every other panel of the editor's always wears one.
+/// Whether the panel `id` wears a header where it is. A maximized panel wears none, and the
+/// figure canvas none while it is the only panel the window shows; every other panel of the
+/// editor's wears one.
 pub fn wearsHeader(tables: *Table.Registry, atoms: *Atom.Registry, id: Atom) bool {
-    const stage = id == Atom.from(workspaces.figure_stage);
+    if (panels_mod.isMaximized(tables, atoms, id)) return false;
+    const stage = id == Atom.from(fixed_panels.figure_stage);
     if (!stage) return true;
     return panels_mod.load(tables, atoms).visibleCount() > 1;
 }
@@ -99,7 +102,7 @@ pub const Header = struct {
             .offset = .{ .x = frame.x, .y = frame.y },
             .hovered = state.hoveredElementId(tables),
             .depth = panels_mod.kChromeHitDepth,
-        }, ctx, state.hitRegions(tables, atoms));
+        }, ctx, state.hitRegions(tables, atoms), editor_sequencer.redrawInbox());
         ui.panel_header.drawFootLine(ctx, frame.width, if (header.options.focused) .focused else .unfocused);
     }
 };

@@ -71,7 +71,7 @@ const modes = @import("../modes.zig");
 const open = @import("../open.zig");
 const transient = @import("../transient.zig");
 const action_palette = @import("../action_palette.zig");
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const table_view = @import("../table_view.zig");
 const text_panel = @import("../text_panel.zig");
 const document = @import("../document/document.zig");
@@ -92,7 +92,7 @@ pub const panel = Atom.from(panel_name);
 /// The root of the panel's system: its panels draw again when the system changes a table.
 pub const vcs_p4_root = Atom.from("vcs_p4");
 
-/// The panel, a fixed panel the workspaces system declares while it is shown: along the right
+/// The panel, a fixed panel `fixed_panels` declares while it is shown: along the right
 /// edge of the window, as vcs-git's.
 pub const fixed_panel: plugin.panels.Open = .{ .id = panel, .title = "vcs-p4", .root = vcs_p4_root, .side = .right, .share = 0.45 };
 
@@ -788,8 +788,7 @@ const runner_log_table = Atom.from(runner.log_table_name);
 const text_editor_requests = Atom.from(text_editor.commands_table_name);
 const transient_requests = Atom.from(transient.requests_table_name);
 const palette_requests = Atom.from(action_palette.requests_table_name);
-const shown_panels_table = Atom.from(workspaces.shown_panels_table_name);
-const workspace_table = Atom.from(workspaces.workspace_table_name);
+const shown_panels_table = Atom.from(fixed_panels.shown_panels_table_name);
 const panel_requests_table = Atom.from(plugin.panels.commands_table_name);
 const panel_nodes_table = Atom.from(panels_mod.nodes_table_name);
 const panel_state_table = Atom.from(panels_mod.state_table_name);
@@ -1058,7 +1057,6 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
     result.writeIfPresent(tables, palette_requests);
     open.declareOpenAccess(&result, tables);
     result.writeIfPresent(tables, shown_panels_table);
-    result.writeIfPresent(tables, workspace_table);
     result.writeIfPresent(tables, panel_requests_table);
     if (tables.findByName(panel_state_table) != null) result.readAll(&.{ panel_nodes_table, panel_state_table });
     // The visited buffer's file, which `a` opens: the newest text window in the focus history.
@@ -1217,7 +1215,7 @@ fn followModes(pass: *sequencer.Pass) !void {
 /// Whether the panel is shown: declared, open or about to open.
 pub fn isShown(pass: *const sequencer.Pass) bool {
     if (!pass.declares(shown_panels_table)) return false;
-    return workspaces.panelShown(pass.frame.tables, panel);
+    return fixed_panels.panelShown(pass.frame.tables, panel);
 }
 
 /// What the panel reads of `os_places`, each empty without it.
@@ -1559,16 +1557,13 @@ pub const Work = struct {
         transient.present(work.memory(), work.tables(), .{ .menu = the_menu, .reply = reply });
     }
 
-    /// `global.vcs_p4_status`: shows the panel in the text workspace and gives it the focus,
+    /// `global.vcs_p4_status`: shows the panel and gives it the focus,
     /// refreshing; while it has the focus, refreshes.
     pub fn show(work: Work) !void {
         const frame = work.pass.frame;
         const tables_now = work.tables();
         const atoms = frame.atoms;
-        const workspace = workspaces.activeWorkspace(tables_now, atoms);
-        const elsewhere = workspace == .app or workspace == .figure;
-        if (elsewhere and work.pass.writes(workspace_table)) workspaces.arrange(tables_now, atoms, .text);
-        workspaces.showPanel(tables_now, atoms, panel, .arranged, .take);
+        fixed_panels.showPanel(tables_now, atoms, panel, .arranged, .take);
         work.state.view.* = @intFromEnum(View.status);
         // What the page shows is published before the first answer, so no table of it reads as
         // not published.
@@ -1583,7 +1578,7 @@ pub const Work = struct {
         switch (viewOf(state.view.*)) {
             .process_log => state.view.* = state.process_log_return.*,
             .history => state.view.* = @intFromEnum(View.status),
-            .status => workspaces.hidePanel(work.tables(), panel),
+            .status => fixed_panels.hidePanel(work.tables(), panel),
         }
     }
 

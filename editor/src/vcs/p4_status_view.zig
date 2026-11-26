@@ -22,6 +22,7 @@ const panel_frame = @import("../panel_frame.zig");
 const editor_state = @import("../state.zig");
 const style = @import("../ui/style.zig");
 const document_view = @import("../document/view.zig");
+const editor_sequencer = @import("../editor_sequencer.zig");
 
 /// The panel's row as the draw reads it; null without it.
 pub fn stateOf(tables: *Table.Registry) ?model.StateRead {
@@ -66,7 +67,7 @@ fn renderPage(scratch: memory_mod.Scratch, tables: *Table.Registry, atoms: *Atom
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .hovered = editor_state.hoveredElementId(tables),
         .depth = panels_mod.kPanelHitDepth,
-    }, ctx, editor_state.hitRegions(tables, atoms));
+    }, ctx, editor_state.hitRegions(tables, atoms), editor_sequencer.redrawInbox());
 }
 
 /// The runner's log view's lines.

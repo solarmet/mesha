@@ -17,14 +17,16 @@ const plugin = mesha.plugin;
 
 const profiler_api = plugin.profiler_api;
 const vsync = @import("../ui/vsync.zig");
+const style = @import("../ui/style.zig");
 const Record = profiler_api.Record;
 const Message = profiler_api.Message;
 const Level = mesha.log.Level;
 
 /// A span narrower than this merges with narrow neighbours.
 pub const min_span_width: f32 = 1;
-pub const row_height: f32 = 18;
-pub const lane_header_height: f32 = 16;
+/// A span's row and a lane's name: a line of `style.small_font`, which the profiler draws them in.
+pub const row_height: f32 = style.metric.small_text_line + 1;
+pub const lane_header_height: f32 = style.metric.small_text_line + 1;
 
 /// The part of time on screen, `width` pixels across.
 pub const View = struct {
@@ -298,7 +300,7 @@ pub const LaneDrawable = struct {
     lane: profiler_api.Lane,
     view: View,
     names: *const profiler_api.Snapshot,
-    font: Atom,
+    font: roop.Font,
     /// Zones of this name stand out; others dim. None when zero.
     highlight: u64,
     /// Zones whose names do not hold this, ignoring case, dim too. Borrowed.
@@ -454,7 +456,7 @@ pub const LaneDrawable = struct {
 };
 
 /// A card of lines beside the pointer, kept within `size`.
-fn drawCard(ctx: *roop.Context, font: Atom, size: math.Vec2f, pointer: math.Vec2f, texts: []const []const u8, colors: []const roop.Color) void {
+fn drawCard(ctx: *roop.Context, font: roop.Font, size: math.Vec2f, pointer: math.Vec2f, texts: []const []const u8, colors: []const roop.Color) void {
     const line_height: f32 = 16;
     var width: f32 = 0;
     for (texts) |text| width = @max(width, ctx.measureText(font, text).w);
@@ -472,7 +474,7 @@ fn drawCard(ctx: *roop.Context, font: Atom, size: math.Vec2f, pointer: math.Vec2
     }
 }
 
-pub const ruler_height: f32 = 18;
+pub const ruler_height: f32 = style.metric.small_text_line + 1;
 
 /// The time scale over the lanes: a tick at each round step of time, labelled from the
 /// frame's start, the step chosen so labels sit about `label_spacing` pixels apart.
@@ -480,7 +482,7 @@ pub const RulerDrawable = struct {
     view: View,
     /// The frame's start, which the labels count from.
     frame_begin_ns: f64,
-    font: Atom,
+    font: roop.Font,
     /// The time cursor's x, labelled with its time over the ticks.
     cursor_x: ?f32 = null,
 
@@ -552,7 +554,7 @@ pub const FrameStripDrawable = struct {
     budget_ms: f64,
     scale_ms: f64,
     /// Labels the vsync bands when given.
-    font: ?Atom = null,
+    font: ?roop.Font = null,
     /// A value per frame to chart instead of the frames' lengths.
     chart: ?Chart = null,
     /// Each frame's most severe message, aligned with `frames`: 0 for none, else the level

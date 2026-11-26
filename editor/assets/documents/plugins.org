@@ -1,0 +1,6 @@
+#+TITLE: Plugins
+
+- Build :: {{{plugins.build}}}
+
+#+BEGIN: table :source plugins.loaded :columns "name state build loaded loads directory" :fill directory
+#+END:

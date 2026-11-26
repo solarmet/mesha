@@ -13,6 +13,7 @@ const gesture = @import("gesture.zig");
 const preview = @import("preview.zig");
 const prompts = @import("prompts.zig");
 const session = @import("session.zig");
+const sketches = @import("sketches.zig");
 const watches = @import("watches.zig");
 const workspace = @import("workspace.zig");
 const sequencer = mesha.sequencer;
@@ -75,7 +76,11 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
     result.readAll(&groups.state);
     result.writeAll(&.{ groups.editor, groups.observed });
     if (frame.tables.findByName(catalog_table) != null) result.read(catalog_table);
-    if (frame.messages.len != 0 or catalogMoved(frame)) groups.declareEditing(&result);
+    if (frame.messages.len != 0 or catalogMoved(frame)) {
+        groups.declareEditing(&result);
+        // A figure closed moves the stage on to another buffer.
+        workspace.declareAfterClose(&result, frame.tables);
+    }
     return result;
 }
 
@@ -312,7 +317,7 @@ pub fn consume(context: figure.Context, result: api.Result) bool {
             },
             else => {},
         }
-        @import("sketches.zig").followResult(context, result);
+        sketches.followResult(context, result);
         if (editor.pending_request.* == result.request and (editor.pending_doc.* == result.definition or editor.pending_doc.* == current_doc or editor.pending_doc.* == reconciliation_doc)) {
             // A suppressed load must not leave its name for sync's startup fallback.
             // Only retire the exact prompt intent; a newer load still owns its state.
@@ -358,12 +363,12 @@ pub fn observe(context: figure.Context, allocator: std.mem.Allocator) !bool {
             return changed;
         }
         // Removed/replaced identity: discard selection and force explicit rebind.
-        invalidate(context);
+        invalidate(context, entries);
         return true;
     }
     for (entries) |entry| if (entry.info.definition == editor.doc.*) {
         if (!entry.info.editor_open) {
-            invalidate(context);
+            invalidate(context, entries);
             return true;
         }
         observed.doc.* = editor.doc.*;
@@ -376,14 +381,18 @@ pub fn observe(context: figure.Context, allocator: std.mem.Allocator) !bool {
         return true;
     };
     if (editor.doc.* != api.none) {
-        invalidate(context);
+        invalidate(context, entries);
         return true;
     }
     return false;
 }
 
-fn invalidate(context: figure.Context) void {
+/// Lets go of the document shown, whose identity in the catalog's `entries` went or changed.
+/// When it is no longer open in `entries` at all, closed or unloaded, the stage moves on to
+/// another buffer (`workspace.showAfterClose`); a document only reloaded stays for its rebind.
+fn invalidate(context: figure.Context, entries: []const figure.DefinitionEntry) void {
     const editor = session.get(context.tables);
+    const closed = editor.doc.*;
     session.removeRows(session.selections(context.tables).table, editor.doc.*);
     if (editor.pending_doc.* == editor.doc.*) editor.pending_doc.* = session.none;
     if (editor.pending_target.* == editor.doc.*) editor.pending_target.* = session.none;
@@ -391,6 +400,10 @@ fn invalidate(context: figure.Context) void {
     editor.active_id.* = 0;
     editor.active_bone.* = 0;
     session.observed(context.tables).observed_valid.* = 0;
+    for (entries) |entry| {
+        if (entry.info.definition == closed and entry.info.editor_open) return;
+    }
+    workspace.showAfterClose(context.tables, context.atoms, closed);
 }
 
 /// The catalog moved to `version`: the editor follows it on its next look.

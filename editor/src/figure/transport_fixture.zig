@@ -53,6 +53,9 @@ pub fn clearResults(tables: *Table.Registry) void {
 pub fn synchronize(memory: *mesha.memory.Memory, atoms: *mesha.Atom.Registry, tables: *Table.Registry) !void {
     var host: figure_runtime.HostTransport.Host = .{ .context = .{ .memory = memory, .atoms = atoms, .tables = tables } };
     try figure_runtime.HostTransport.prepareCommands(&host);
+    // The watches system's tables, which it subscribes through.
+    const watching: sequencer.Built(1) = .{ .name = "figure_watches_test", .steps = .{.{ .system = watches.system() }} };
+    try sequencer.ensureInboxes(try memory.tableScratchAllocator(), atoms, tables, &watching.sequencer());
     declareWatches(memory, atoms, tables);
     try figure_runtime.HostTransport.synchronize(&host);
 }

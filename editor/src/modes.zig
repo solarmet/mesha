@@ -49,6 +49,9 @@ pub const isearch = Atom.from("isearch");
 pub const transient = Atom.from("transient");
 /// A minor mode: the keys other editors share, over those of `global` and `text`.
 pub const cua = Atom.from("cua");
+/// A minor mode: the keys drawing programs share, over those of `global` and `figure`
+/// (`figure_cua_keys`), as `cua` is over `text`'s.
+pub const figure_cua = Atom.from("figure_cua");
 /// A version-control panel: the mode its keys for moving through its sections, folding them,
 /// its views and the work it runs live in; `vcs_git`, `vcs_git_diff`, `vcs_p4` and `vcs_p4_diff`
 /// are under it.
@@ -79,10 +82,12 @@ pub const vcs_p4_diff = Atom.from("vcs_p4_diff");
 /// A text window on vcs-p4's description buffer: sending and giving up the description, over
 /// `buffer`'s keys.
 pub const vcs_p4_message = Atom.from("vcs_p4_message");
+/// The list of plugins while it has the focus: moving through it and building every plugin.
+pub const plugin_list = Atom.from("plugin_list");
 
 /// The text of every mode here, and of `global`, which the editor interns at init so an action
 /// id written as text names its mode: the one list the atoms above and their texts come from.
-pub const names = [_][]const u8{ "global", "figure", "stage", "table", "text", "buffer", "table_cell", "form", "filter", "prompt", "isearch", "transient", "cua", "vcs", "vcs_git", "vcs_log", "vcs_rebase", "vcs_git_diff", "vcs_message", "vcs_p4", "vcs_p4_history", "vcs_p4_diff", "vcs_p4_message" };
+pub const names = [_][]const u8{ "global", "figure", "stage", "table", "text", "buffer", "table_cell", "form", "filter", "prompt", "isearch", "transient", "cua", "figure_cua", "vcs", "vcs_git", "vcs_log", "vcs_rebase", "vcs_git_diff", "vcs_message", "vcs_p4", "vcs_p4_history", "vcs_p4_diff", "vcs_p4_message", "plugin_list" };
 
 /// A mode of the editor's and the mode whose keymap it starts from, which makes the parent
 /// active wherever the mode is.
@@ -93,7 +98,8 @@ const Inheritance = struct { mode: Atom, parent: Atom };
 /// plain field, a transient menu and a version-control panel are under `global`, vcs-git, its
 /// rebase list and its diff panel under `vcs`, its log under `vcs_git`, and its commit message
 /// under `buffer`; vcs-p4 and its diff panel under `vcs`, its history under `vcs_p4`, and its
-/// description under `buffer`. `cua`, a minor mode, has none.
+/// description under `buffer`. The list of plugins is under `global`. `cua` and `figure_cua`,
+/// minor modes, have none.
 const chain = [_]Inheritance{
     .{ .mode = figure, .parent = actions.global_mode },
     .{ .mode = stage, .parent = actions.global_mode },
@@ -116,7 +122,9 @@ const chain = [_]Inheritance{
     .{ .mode = vcs_p4_history, .parent = vcs_p4 },
     .{ .mode = vcs_p4_diff, .parent = vcs },
     .{ .mode = vcs_p4_message, .parent = buffer },
+    .{ .mode = plugin_list, .parent = actions.global_mode },
     .{ .mode = cua, .parent = actions.no_mode },
+    .{ .mode = figure_cua, .parent = actions.no_mode },
 };
 
 /// Asks the actions system to register each of the editor's modes with its parent, in `chain`'s
@@ -160,15 +168,21 @@ fn registeredParent(registry: *Table, mode: Atom) ?Atom {
     return null;
 }
 
-/// The modes of a panel or a prompt of the major mode `major`: `cua` the one minor mode when
-/// `major` inherits `text` by the parents `registry` gives (`actions_mode_registry`, null when
-/// there is none) and `keymap` is the common keys, none otherwise.
+/// The modes of a panel or a prompt of the major mode `major`. While `keymap` is the common keys,
+/// one minor mode puts them over its own: `cua` when `major` inherits `text` by the parents
+/// `registry` gives (`actions_mode_registry`, null when there is none), `figure_cua` for
+/// `figure`. None otherwise.
 pub fn modesFor(major: Atom, keymap: text_editor.Keymap, registry: ?*Table) actions.Modes {
     var result: actions.Modes = .{ .major = major };
-    if (keymap == .cua and inheritsText(registry, major)) {
+    if (keymap != .cua) return result;
+    if (major == figure) {
+        result.minors[0] = figure_cua;
+    } else if (inheritsText(registry, major)) {
         result.minors[0] = cua;
-        result.minor_count = 1;
+    } else {
+        return result;
     }
+    result.minor_count = 1;
     return result;
 }
 

@@ -12,7 +12,7 @@ const input = mesha.input;
 const plugin = mesha.plugin;
 const figure = mesha.figure;
 const panels_mod = mesha.panels;
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const roop = mesha.roop;
 const session = @import("session.zig");
 const sequencer = mesha.sequencer;
@@ -26,7 +26,10 @@ const prompts = @import("prompts.zig");
 const editor_state = @import("../state.zig");
 const style = @import("../ui/style.zig");
 const button = @import("../ui/button.zig");
+const editor_sequencer = @import("../editor_sequencer.zig");
 const api = figure;
+const chrome = @import("chrome.zig");
+const editor_mod = @import("../editor.zig");
 
 pub const name = "editor_figure_color";
 pub const targets_name = "editor_figure_color_targets";
@@ -337,7 +340,7 @@ pub fn sync(tables: *Table.Registry, atoms: *Atom.Registry) void {
         return;
     };
     const settings = config(tables);
-    if (workspaces.activeWorkspace(tables, atoms) != .figure or session.get(tables).mode.* != settings.mode.*) dismiss(config(tables), gesture.get(tables));
+    if (!workspace.stageShown(tables) or session.get(tables).mode.* != settings.mode.*) dismiss(config(tables), gesture.get(tables));
 }
 
 pub fn renameDocument(settings: ConfigView, color_targets: TargetRows, old: Atom, new: Atom) void {
@@ -390,14 +393,26 @@ fn setColor(settings: session.Row(Config), picker_color: session.Color) void {
     settings.alpha.* = @as(f32, @floatFromInt(picker_color[3])) / 255;
 }
 
+/// The popover's rows, top to bottom, each a line of text or a control of the editor's metrics.
+const popover_padding: f32 = 10;
+const popover_gap: f32 = 6;
+const text_line = style.metric.text_line;
+const control_height = style.metric.control_height;
+const channels_height: f32 = 180;
+const swatch_row_height: f32 = 18;
+const popover_width: f32 = 280;
+/// The popover's height: its rows and the gaps between them, within its padding.
+const popover_height: f32 = 2 * popover_padding + text_line + channels_height + 2 * control_height +
+    (text_line + 2 * swatch_row_height) + (text_line + swatch_row_height) + control_height + text_line + 8 * popover_gap;
+
 pub fn bounds(tables: *Table.Registry, atoms: *Atom.Registry) ?panels_mod.Rect {
     if (!isOpen(tables)) return null;
-    const stage = @import("workspace.zig").stageViewport(tables, atoms) orelse return null;
-    const canvas = geometry.stageLayout(stage, @import("workspace.zig").stageChrome(session.observed(tables))).canvas;
-    if (canvas.w < 280 or canvas.h < 442) return null;
+    const stage = workspace.stageViewport(tables, atoms) orelse return null;
+    const canvas = geometry.stageLayout(stage, workspace.stageChrome(session.observed(tables))).canvas;
+    if (canvas.w < popover_width or canvas.h < popover_height) return null;
     const settings = config(tables);
-    const top = std.math.clamp(settings.anchor_y.*, canvas.y, canvas.y + canvas.h - 442);
-    return .{ .x = canvas.x + canvas.w - 280, .y = top, .w = 280, .h = 442 };
+    const top = std.math.clamp(settings.anchor_y.*, canvas.y, canvas.y + canvas.h - popover_height);
+    return .{ .x = canvas.x + canvas.w - popover_width, .y = top, .w = popover_width, .h = popover_height };
 }
 
 fn controlRect(panel: panels_mod.Rect, part: Part) panels_mod.Rect {
@@ -407,9 +422,10 @@ fn controlRect(panel: panels_mod.Rect, part: Part) panels_mod.Rect {
             .hue => 198,
             .alpha => 226,
         },
-        .y = panel.y + 40,
-        .w = if (part == .saturation_value) 180 else 20,
-        .h = 180,
+        // Below the title.
+        .y = panel.y + popover_padding + text_line + popover_gap,
+        .w = if (part == .saturation_value) channels_height else 20,
+        .h = channels_height,
     };
 }
 
@@ -679,27 +695,27 @@ pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registr
     var tree = ui.Tree.init(scratch, atoms, 192) catch return;
     const settings = config(tables);
     const channel = targetChannel(settings);
-    if (tree.beginRect("figure.color.panel", .{ .size = .{ .w = .fill, .h = .fill }, .padding = 10, .gap = 6, .bg = style.col.sidebar, .border = style.col.accent_border, .border_size = 1, .clip_content = true })) {
+    if (tree.beginRect("figure.color.panel", .{ .size = .{ .w = .fill, .h = .fill }, .padding = popover_padding, .gap = popover_gap, .bg = style.col.sidebar, .border = style.col.accent_border, .border_size = 1, .clip_content = true })) {
         defer tree.endRect();
-        @import("chrome.zig").hoverRegion(&tree, "Color popover");
+        chrome.hoverRegion(&tree, "Color popover");
         const object_name = switch (std.enums.fromInt(Scope, settings.scope.*) orelse .defaults) {
             .defaults => "New artwork",
             .selection => "Selected artwork",
             .property => atoms.lookup(settings.label.*) orelse "artwork",
         };
         const title = std.fmt.allocPrint(scratch.allocator, "{s} - {s}", .{ if (channel == .fill) "Fill" else "Stroke", object_name }) catch "Color";
-        tree.text("figure.color.title", title, .{ .font = style.ui_font, .color = style.col.text, .size_hint = .{ .w = .fill, .h = .{ .fixed = 24 } } });
+        tree.text("figure.color.title", title, .{ .font = style.ui_font, .color = style.col.text, .size_hint = .{ .w = .fill, .h = .{ .fixed = text_line } } });
         const channels = scratch.allocator.create(Channels) catch return;
         channels.* = .{ .hue = settings.hue.*, .saturation = settings.saturation.*, .value = settings.value.*, .alpha = settings.alpha.* };
-        tree.custom("figure.color.channels", channels, .{ .size = .{ .w = .fill, .h = .{ .fixed = 180 } } });
-        if (tree.beginRect("figure.color.comparison", .{ .axis = .horizontal, .cross_align = .center, .size = .{ .w = .fill, .h = .{ .fixed = 26 } }, .gap = 6 })) {
+        tree.custom("figure.color.channels", channels, .{ .size = .{ .w = .fill, .h = .{ .fixed = channels_height } } });
+        if (tree.beginRect("figure.color.comparison", .{ .axis = .horizontal, .cross_align = .center, .size = .{ .w = .fill, .h = .{ .fixed = control_height } }, .gap = 6 })) {
             defer tree.endRect();
             tree.text("figure.color.new.label", "New", .{ .font = style.ui_font, .color = style.col.text });
             swatch(&tree, "figure.color.new", settings.current.*, .{ .w = .{ .fixed = 62 }, .h = .fill });
             tree.text("figure.color.old.label", "Old", .{ .font = style.ui_font, .color = style.col.text });
             colorButton(&tree, .{ "figure.color.old", @as(u64, 100) }, settings.original.*);
         }
-        if (tree.beginRect("figure.color.fields", .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = 26 } }, .gap = 6 })) {
+        if (tree.beginRect("figure.color.fields", .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = control_height } }, .gap = 6 })) {
             defer tree.endRect();
             const color = settings.current.*;
             const hex = std.fmt.allocPrint(scratch.allocator, "#{x:0>2}{x:0>2}{x:0>2}{x:0>2}", .{ color[0], color[1], color[2], color[3] }) catch "Hex RGBA";
@@ -707,12 +723,12 @@ pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registr
             button.render(&tree, "figure.color.hex", workspace.to(&tree, .from(Msg.figure_color_hex), {}), .{ .label = hex, .variant = .text_only, .size = .{ .w = .fill, .h = .fill } });
             button.render(&tree, "figure.color.opacity", workspace.to(&tree, .from(Msg.figure_color_opacity), {}), .{ .label = alpha, .variant = .text_only, .size = .{ .w = .fill, .h = .fill } });
         }
-        if (tree.beginRect("figure.color.palette", .{ .size = .{ .w = .fill, .h = .{ .fixed = 50 } } })) {
+        if (tree.beginRect("figure.color.palette", .{ .size = .{ .w = .fill, .h = .{ .fixed = text_line + 2 * swatch_row_height } } })) {
             defer tree.endRect();
-            tree.text("figure.color.palette.label", "Document", .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .w = .fill, .h = .{ .fixed = 14 } } });
+            tree.text("figure.color.palette.label", "Document", .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .w = .fill, .h = .{ .fixed = text_line } } });
             const definition = session.readDefinition(tables, atoms, settings.doc.*) catch null;
             for (0..2) |row| {
-                if (!tree.beginRect(.{ "figure.color.palette.row", row }, .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = 18 } }, .gap = 1 })) continue;
+                if (!tree.beginRect(.{ "figure.color.palette.row", row }, .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = swatch_row_height } }, .gap = 1 })) continue;
                 defer tree.endRect();
                 for (0..16) |column| {
                     const index = row * 16 + column;
@@ -722,10 +738,10 @@ pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registr
                 }
             }
         }
-        if (tree.beginRect("figure.color.recents", .{ .size = .{ .w = .fill, .h = .{ .fixed = 32 } } })) {
+        if (tree.beginRect("figure.color.recents", .{ .size = .{ .w = .fill, .h = .{ .fixed = text_line + swatch_row_height } } })) {
             defer tree.endRect();
-            tree.text("figure.color.recents.label", "Recent", .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .w = .fill, .h = .{ .fixed = 14 } } });
-            if (tree.beginRect("figure.color.recents.row", .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = 18 } }, .gap = 1 })) {
+            tree.text("figure.color.recents.label", "Recent", .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .w = .fill, .h = .{ .fixed = text_line } } });
+            if (tree.beginRect("figure.color.recents.row", .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = swatch_row_height } }, .gap = 1 })) {
                 defer tree.endRect();
                 var recent: [16]?session.Color = @splat(null);
                 var rows = drawing.recentColors(tables).read();
@@ -737,21 +753,21 @@ pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registr
                 }
             }
         }
-        if (tree.beginRect("figure.color.buttons", .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = 26 } }, .gap = 6 })) {
+        if (tree.beginRect("figure.color.buttons", .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = control_height } }, .gap = 6 })) {
             defer tree.endRect();
             button.render(&tree, "figure.color.sample", workspace.to(&tree, .from(Msg.figure_color_sample), {}), .{ .label = if (settings.sampling.* != 0) "Pick on canvas..." else "Eyedropper", .selected = settings.sampling.* != 0, .variant = .compact, .size = .{ .w = .fill, .h = .fill } });
             button.render(&tree, "figure.color.done", workspace.to(&tree, .from(Msg.figure_color_done), {}), .{ .label = "Done", .variant = .compact, .size = .{ .w = .fill, .h = .fill } });
         }
         const help = if (settings.fallback.* != 0) "Fallback color; gradient stays enabled" else "Drag previews; Esc cancels the drag";
-        tree.text("figure.color.help", help, .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .w = .fill, .h = .{ .fixed = 16 } } });
+        tree.text("figure.color.help", help, .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .w = .fill, .h = .{ .fixed = text_line } } });
     }
     tree.commit(.{
         .root_size = .{ .x = panel.w, .y = panel.h },
         .origin = .{ .x = panel.x - viewport.x, .y = panel.y - viewport.y },
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .hovered = editor_state.hoveredElementId(tables),
-        .depth = @import("../editor.zig").kHitDepth + 1,
-    }, ctx, editor_state.hitRegions(tables, atoms));
+        .depth = editor_mod.kHitDepth + 1,
+    }, ctx, editor_state.hitRegions(tables, atoms), editor_sequencer.redrawInbox());
     // The controls draw themselves, so these regions above the panel take their presses.
     const press = workspace.to(&tree, .from(Msg.figure_color_down), {});
     for ([_]Part{ .saturation_value, .hue, .alpha }) |part| {
@@ -761,7 +777,7 @@ pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registr
             .size = mesha.math.Vec2f{ .x = rect.w, .y = rect.h },
             .on_click = press.tag,
             .on_click_inbox = press.inbox,
-            .depth = @as(u32, @import("../editor.zig").kHitDepth + 2),
+            .depth = @as(u32, editor_mod.kHitDepth + 2),
         });
     }
 }

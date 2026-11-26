@@ -9,7 +9,7 @@
 //!         tree.text(...);                       // what the panel adds, left to right
 //!         panel_header.end(&tree, options);
 //!     }
-//!     tree.commit(.{ .root_size = .{ .x = frame.w, .y = panel_header.height }, .depth = panels.kChromeHitDepth, ... }, ctx, hits);
+//!     tree.commit(.{ .root_size = .{ .x = frame.w, .y = panel_header.height }, .depth = panels.kChromeHitDepth, ... }, ctx, hits, inboxOf(system));
 //!     panel_header.drawFootLine(ctx, frame.w, focus);
 //!
 //! and draws its content in what is left, `contentRect(frame)`, which its kernels ask for too
@@ -23,12 +23,13 @@
 //! panel with the focus. A caller sends close to a system of its own, or has no close button
 //! (`Options.close`).
 const std = @import("std");
-const Atom = @import("../core/atom.zig").Atom;
+const Atom = atom.Atom;
 const math = @import("../core/math.zig");
 const panels = @import("../systems/panels.zig");
-const resources = @import("../systems/resources.zig");
+const font_mod = @import("../systems/font.zig");
 const roop = @import("../systems/roop.zig");
 const ui = @import("ui.zig");
+const atom = @import("../core/atom.zig");
 
 /// The host's panel chrome's inbox, where the header's presses go.
 pub const chrome_inbox = Atom.from("inbox.panel_chrome");
@@ -65,8 +66,9 @@ pub const Close = union(enum) {
 /// `end`: size the tree for these and the caller's own.
 pub const commands = 32;
 
-/// The font of the header's title, which what a panel adds usually shares.
-pub const font = resources.kFont24Name;
+/// The font of the header's title, which what a panel adds usually shares: the editor's
+/// OpenSans, from its `assets/`, as `icon_font` is.
+pub const font = ui.Font.init(.{ .plugin = "editor", .path = "fonts/OpenSans-Regular.ttf", .pixel_height = 24 });
 /// The header's fill.
 pub const fill_color = ui.rgb(44, 44, 44);
 /// The title of the panel that has the focus.
@@ -80,7 +82,7 @@ pub const focus_color = ui.rgb(13, 153, 255);
 /// How tall the focused panel's foot line is, in pixels.
 pub const focus_line_height: f32 = 2;
 
-const icon_font = resources.kRowIconFontName;
+const icon_font = ui.Font.init(.{ .plugin = "editor", .path = "fonts/RobotoMonoNerdFontMono-Regular.ttf", .pixel_height = font_mod.kRowIconPixelHeight, .glyph_codepoints = &font_mod.rail_icon_codepoints });
 const quiet_hover = ui.rgba(255, 255, 255, 22);
 const maximize_icon = "\u{f05af}";
 const restore_icon = "\u{f05b2}";
@@ -165,6 +167,35 @@ pub fn drawFootLine(ctx: *roop.Context, width: f32, focus: enum { focused, unfoc
     ctx.fill();
 }
 
+/// How thick the border around the panel with the focus is, in pixels.
+pub const focus_border_width: f32 = 2;
+/// How far the focus border's glow reaches past it: the panels' gap, which it fits in.
+pub const focus_glow_radius: f32 = panels.kGap;
+/// The colour of the focus border's glow.
+pub const focus_glow_color = ui.rgba(13, 153, 255, 150);
+
+/// Whether a focus border glows: it does around what has the keyboard, and not around the
+/// panel the keyboard returns to while something outside the panels has lent it.
+pub const FocusGlow = enum { glowing, plain };
+
+/// The border around what has the focus, `focus_border_width` thick in `focus_color`, inside
+/// `rect` (in `ctx`'s coordinates), with its glow reaching out past it when `glow` says so.
+/// Nothing for a rect too small to hold it. The host's panel chrome draws it around the focused
+/// panel, and the editor's minibuffer around itself while it has the keyboard.
+pub fn drawFocusBorder(ctx: *roop.Context, rect: panels.Rect, glow: FocusGlow) void {
+    if (rect.w <= focus_border_width or rect.h <= focus_border_width) return;
+    // The stroke stays inside the rect, and the glow begins at its edge.
+    const inset = focus_border_width * 0.5;
+    ctx.beginPath();
+    ctx.rect(rect.x + inset, rect.y + inset, rect.w - focus_border_width, rect.h - focus_border_width);
+    ctx.strokeColor(focus_color);
+    ctx.strokeWidth(focus_border_width);
+    // A glow set before would otherwise carry over to a plain border.
+    const glow_radius: f32 = if (glow == .glowing) focus_glow_radius else 0;
+    ctx.strokeGlow(focus_glow_color, glow_radius);
+    ctx.stroke();
+}
+
 /// A quiet icon button: no fill until the pointer is over it.
 fn iconButton(tree: *ui.Tree, id: anytype, icon: []const u8, click: ui.Target) void {
     const element = tree.toElementId(id);
@@ -232,10 +263,10 @@ const IconGlyph = struct {
 
     /// Fills `text`'s glyph in `color` with its ink centred in a rect of `size`, in `ctx`'s space
     /// with the rect's top left corner at its origin, as `ui.Tree.custom` calls it when it draws.
-    /// Draws nothing while the icon font is not loaded or does not have the glyph.
+    /// Draws nothing while the icon font is not loaded, as the engine's font in its place has no
+    /// icons, or does not have the glyph.
     pub fn draw(self: *const IconGlyph, size: math.Vec2f, ctx: *roop.Context) void {
-        const provider = ctx.renderer.font_provider orelse return;
-        const found = provider.get(icon_font) orelse return;
+        const found = ctx.fontView(icon_font) orelse return;
         const codepoint = std.unicode.utf8Decode(self.text) catch return;
         const glyph = found.glyph(codepoint) orelse return;
         const ink_width: f32 = @floatFromInt(glyph.x1 - glyph.x0);

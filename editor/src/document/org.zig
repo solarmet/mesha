@@ -887,7 +887,7 @@ test "document: the vcs-git document reads to its title, refresh, terms, paragra
         .{ .heading = "Unmerged (", .count = "vcs-git.unmerged-count", .source = "vcs-git.unmerged", .columns = "change path", .rows = null },
         .{ .heading = "Unstaged changes (", .count = "vcs-git.unstaged-count", .source = "vcs-git.unstaged", .columns = "change path", .rows = null },
         .{ .heading = "Staged changes (", .count = "vcs-git.staged-count", .source = "vcs-git.staged", .columns = "change path", .rows = null },
-        .{ .heading = "Recent commits", .count = "", .source = "vcs-git.commits", .columns = "hash refs subject author date", .rows = 10 },
+        .{ .heading = "Recent commits", .count = "", .source = "vcs-git.commits", .columns = "hash subject author date", .rows = 10 },
     };
     for (expected, 0..) |section, index| {
         const heading = try expectHeading(&document, 1, blocks[8 + 2 * index]);
@@ -905,7 +905,6 @@ test "document: the vcs-git document reads to its title, refresh, terms, paragra
     }
     var names = columns(blocks[17].content.table.columns);
     try testing.expectEqualStrings("hash", names.next().?);
-    try testing.expectEqualStrings("refs", names.next().?);
     try testing.expectEqualStrings("subject", names.next().?);
     try testing.expectEqualStrings("author", names.next().?);
     try testing.expectEqualStrings("date", names.next().?);

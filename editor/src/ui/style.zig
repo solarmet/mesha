@@ -2,11 +2,35 @@ const mesha = @import("mesha");
 const ui = mesha.ui;
 const Table = mesha.Table;
 const resources = mesha.resources;
+const font_mod = mesha.font;
 const text_panel = @import("../text_panel.zig");
 const document_view = @import("../document/view.zig");
 
-/// Editor UI text, 17 pixels tall.
-pub const ui_font = resources.kFont24Name;
+/// Editor UI text: Open Sans baked 24 pixels tall (`metric.text_line`), its em about 17.6
+/// pixels, as stb_truetype fits the font's ascent to descent into the height it bakes at.
+pub const ui_font = ui.panel_header.font;
+/// Text in a dense drawing whose rows are a line of it, as the profiler's timeline: Open Sans
+/// baked `metric.small_text_line` pixels tall.
+pub const small_font = sansFont(metric.small_text_line);
+/// The rail's icons, centered by their ink (`button`).
+pub const rail_icon_font = iconFont(font_mod.kRailIconPixelHeight);
+/// A row's icons, as a panel header's.
+pub const row_icon_font = iconFont(font_mod.kRowIconPixelHeight);
+
+/// Open Sans from the editor's `assets/`, baked `pixel_height` pixels tall.
+pub fn sansFont(comptime pixel_height: f32) resources.Font {
+    return .init(.{ .plugin = "editor", .path = "fonts/OpenSans-Regular.ttf", .pixel_height = pixel_height });
+}
+
+fn iconFont(comptime pixel_height: f32) resources.Font {
+    return .init(.{ .plugin = "editor", .path = "fonts/RobotoMonoNerdFontMono-Regular.ttf", .pixel_height = pixel_height, .glyph_codepoints = &font_mod.rail_icon_codepoints });
+}
+
+// The heights of what holds a line are built on the fonts' heights: a font baked taller
+// would clip there.
+comptime {
+    if (ui_font.pixel_height != metric.text_line) @compileError("style.ui_font is not baked style.metric.text_line pixels tall");
+}
 
 pub const col = struct {
     pub const canvas = ui.rgb(30, 30, 30);
@@ -61,6 +85,7 @@ pub fn fieldFrame(field_state: FieldState, size: ui.Size) ui.RectParams {
         .cross_align = .center,
         .size = size,
         .padding = 6,
+        .padding_y = 0,
         .gap = 6,
         .bg = if (field_state == .active) col.field_active else col.field,
         .border = if (field_state == .active) col.accent_bright else col.field_border,
@@ -184,7 +209,7 @@ pub fn gridStyle(lifetime: Table.Lifetime) ui.grid.Style {
 pub const outline_code_font = codeFontOf(16);
 
 /// The text panels' font that is `pixels` tall.
-fn codeFontOf(comptime pixels: comptime_int) mesha.Atom {
+fn codeFontOf(comptime pixels: comptime_int) resources.Font {
     for (text_panel.text_sizes) |size| {
         if (size.pixel_height == pixels) return size.font;
     }
@@ -236,14 +261,31 @@ pub fn diffStyle() ui.diff.Style {
 
 pub const playhead = ui.rgb(245, 200, 75);
 
+/// The editor's sizes, in pixels. Every height that holds a line of `ui_font` is built on
+/// `text_line`, so a box sized from these never clips its text: a control pads only its sides,
+/// and its text is centred across its height (`cross_align = .center`).
 pub const metric = struct {
-    pub const outer: f32 = 8;
-    pub const inner: f32 = 8;
-    pub const control: f32 = 32;
-    pub const radius: f32 = 8;
+    /// How tall a line of `ui_font` is: a text element in it takes this height, its capitals
+    /// centred. The height `ui_font` is baked at, which `editor.zig` checks.
+    pub const text_line: f32 = 24;
+    /// How tall a line of `small_font` is, which `editor.zig` checks as it does `text_line`.
+    pub const small_text_line: f32 = 17;
+    /// Between a control's edge and what it holds, along its length and around a bar's controls.
+    pub const control_padding: f32 = 4;
+    /// A button's or a field's height: a line of text with `control_padding` above and below.
+    pub const control_height: f32 = text_line + 2 * control_padding;
+    pub const button_height: f32 = control_height;
+    pub const field_height: f32 = control_height;
+    /// A strip of tabs: a control's height, its labels over the selected tab's underline.
+    pub const tab_height: f32 = control_height;
+    /// A row of a list or a table: a line of text and a little air.
+    pub const row_height: f32 = text_line + 4;
+    /// A bar of controls along a panel's edge: a control with `control_padding` around it.
+    pub const bar_height: f32 = control_height + 2 * control_padding;
+    /// A line of text along a panel's edge, as a status line: no controls in it.
+    pub const line_bar_height: f32 = row_height + 4;
+
     pub const glow: f32 = 1;
     pub const button_radius: f32 = 4;
     pub const field_radius: f32 = 2;
-    pub const button_height: f32 = 28;
-    pub const field_height: f32 = 26;
 };

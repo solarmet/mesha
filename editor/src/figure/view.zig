@@ -32,7 +32,7 @@ const motion = @import("motion.zig");
 const time = mesha.time;
 const prompts = @import("prompts.zig");
 const workspace = @import("workspace.zig");
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const figure_panels = @import("panels.zig");
 
 const Log = mesha.log.scope("figure_editor");
@@ -83,7 +83,7 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
     // The host's publications the system's reads come from.
     watches.declareReads(&result);
     // The sequencer panel is shown and closed with animating, and the canvas hover is the bar's.
-    result.writeIfPresent(frame.tables, Atom.from(workspaces.shown_panels_table_name));
+    result.writeIfPresent(frame.tables, Atom.from(fixed_panels.shown_panels_table_name));
     result.writeIfPresent(frame.tables, Atom.from(plugin.panels.commands_table_name));
     result.writeIfPresent(frame.tables, Atom.from(status_bar.commands_table_name));
     // Errors, warnings and information are told in `*Messages*`.
@@ -180,11 +180,11 @@ fn trackPreview(pass: *sequencer.Pass) !void {
 fn syncSequencer(tables: *Table.Registry, atoms: *Atom.Registry) void {
     const stage = Atom.from(workspace.canvas_id);
     const sequencer_panel = Atom.from(workspace.sequencer_id);
-    if (!workspaces.panelShown(tables, stage)) return;
+    if (!fixed_panels.panelShown(tables, stage)) return;
     const animating = session.get(tables).mode.* == names.animate;
-    const shown = workspaces.panelShown(tables, sequencer_panel);
-    if (animating and !shown) workspaces.showPanel(tables, atoms, sequencer_panel, .arranged, .keep);
-    if (!animating and shown) workspaces.hidePanel(tables, sequencer_panel);
+    const shown = fixed_panels.panelShown(tables, sequencer_panel);
+    if (animating and !shown) fixed_panels.showPanel(tables, atoms, sequencer_panel, .arranged, .keep);
+    if (!animating and shown) fixed_panels.hidePanel(tables, sequencer_panel);
 }
 
 // ---- canvas hover ----------------------------------------------------------------------------

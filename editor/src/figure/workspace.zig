@@ -14,7 +14,9 @@ const input = mesha.input;
 const plugin = mesha.plugin;
 const panels_mod = mesha.panels;
 const panel_frame = @import("../panel_frame.zig");
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
+const buffer_list = @import("../buffer_list.zig");
+const text_panel = @import("../text_panel.zig");
 const transport = @import("commands.zig");
 pub const geometry = @import("geometry.zig");
 const editor_state = @import("../state.zig");
@@ -39,13 +41,15 @@ const view = @import("view.zig");
 const watches = @import("watches.zig");
 const asks = @import("asks.zig");
 const sequencer = mesha.sequencer;
+const editor_sequencer = @import("../editor_sequencer.zig");
+const open = @import("../open.zig");
+const status_bar = @import("../status_bar.zig");
+const editor_mod = @import("../editor.zig");
 
 /// The figure editor's root: its panels draw again when its systems change a table.
 pub const figure_root = Atom.from("figure_editor");
 const resources = mesha.resources;
 const Log = mesha.log.scope("editor");
-const editor_sequencer = @import("../editor_sequencer.zig");
-const open = @import("../open.zig");
 const text_editor = plugin.text_editor_api;
 
 const Zones = mesha.log.scope("figure_editor");
@@ -115,6 +119,7 @@ pub fn system() sequencer.System {
             .{ .name = "figure_canvas.take_input", .run = takeInput },
             .{ .name = "figure_canvas.prune_selection", .run = pruneSelection },
             .{ .name = "figure_canvas.follow_modes", .run = followModes },
+            .{ .name = "figure_canvas.note_visit", .run = noteVisit },
         },
     };
 }
@@ -122,7 +127,7 @@ pub fn system() sequencer.System {
 /// The figure editor's panels' modes, a `modes.PanelModesRow` each.
 pub const panel_modes_table_name = "figure_panel_modes";
 
-/// Every panel of the figure editor's is `figure`'s. They are open only while its workspace is
+/// Every panel of the figure editor's is `figure`'s. They are open only while its stage is
 /// shown, which is when the canvas runs.
 fn followModes(pass: *sequencer.Pass) !void {
     const figure_panels = [_][]const u8{ canvas_id, outliner_id, inspector_id, sequencer_id };
@@ -131,42 +136,52 @@ fn followModes(pass: *sequencer.Pass) !void {
     try modes.syncPanelModes(pass, panel_modes_table_name, &wanted);
 }
 
-/// Whether the figure workspace is shown: while it is hidden, the figure systems run only for
-/// their messages and for work they left unfinished. Without the panels, as in a headless
-/// run, it counts as shown.
+/// The figure shown is the latest visited buffer (`buffer_list`) while one of the figure
+/// editor's panels has the focus, as a text buffer is while its window has it.
+fn noteVisit(pass: *sequencer.Pass) !void {
+    const tables = pass.frame.tables;
+    if (!pass.writes(Atom.from(buffer_list.visits_table_name))) return;
+    if (!figureHasKeys(tables, pass.frame.atoms)) return;
+    buffer_list.visit(tables, .figure, session.get(tables).doc.*);
+}
+
+/// Whether the figure stage is shown: while it is not, the figure systems run only for their
+/// messages and for work they left unfinished. Without the editor's fixed panels, as in a
+/// headless run, it counts as shown.
 pub fn shown(frame: *const sequencer.Frame) bool {
-    return workspaceShown(frame.tables, frame.atoms);
+    return stageShown(frame.tables);
 }
 
-/// `shown`, from the tables it reads.
-fn workspaceShown(tables: *Table.Registry, atoms: *Atom.Registry) bool {
-    // Without the editor's workspaces, as in a test of the figure editor alone, it is shown.
-    if (tables.findByName(Atom.from(workspaces.workspace_table_name)) == null) return true;
-    return workspaces.activeWorkspace(tables, atoms) == .figure;
+/// `shown`, from the tables it reads: whether the figure stage has a row among the fixed
+/// panels shown, open or about to open with the frame.
+pub fn stageShown(tables: *Table.Registry) bool {
+    // Without the editor's fixed panels, as in a test of the figure editor alone, it is shown.
+    if (tables.findByName(Atom.from(fixed_panels.shown_panels_table_name)) == null) return true;
+    return fixed_panels.panelShown(tables, Atom.from(fixed_panels.figure_stage));
 }
 
-/// The directory find-file opens on from the figure workspace: that of the file of the figure
-/// it shows, while it is showing; empty when it is hidden, shows no figure, or its figure has
+/// The directory find-file opens on from the figure stage: that of the file of the figure it
+/// shows, while it is shown; empty when it is not, shows no figure, or its figure has
 /// no file. The slice is the host's figure definitions table's, good until the host next
 /// publishes. A system that calls it declares `declareFindFileDirectoryReads`.
 pub fn findFileDirectory(tables: *Table.Registry, atoms: *Atom.Registry) []const u8 {
     if (tables.findByName(Atom.from(session.name)) == null) return "";
-    if (!workspaceShown(tables, atoms)) return "";
+    if (!stageShown(tables)) return "";
     const editor = session.get(tables);
     if (editor.doc.* == session.none) return "";
     const path = session.definitionPath(tables, atoms, editor.doc.*) orelse return "";
     return std.fs.path.dirname(path) orelse "";
 }
 
-/// What `findFileDirectory` reads: which workspace is active, the figure the editor shows, and
-/// the host's figure definitions, which hold its file.
+/// What `findFileDirectory` reads: whether the figure stage is shown, the figure the editor
+/// shows, and the host's figure definitions, which hold its file.
 pub fn declareFindFileDirectoryReads(result: *sequencer.Access) void {
-    result.read(Atom.from(workspaces.workspace_table_name));
+    result.read(Atom.from(fixed_panels.shown_panels_table_name));
     result.read(Atom.from(session.name));
     result.read(Atom.from(figure.definitions_table_name));
 }
 
-/// Hidden, the canvas still takes other systems' requests, as leaving the workspace.
+/// Not shown, the canvas still takes other systems' requests, as its stage closing.
 fn canvasActive(frame: *const sequencer.Frame) bool {
     if (shown(frame)) return true;
     const requests = Requests.of(frame.memory, frame.tables, commands_table_name);
@@ -174,18 +189,27 @@ fn canvasActive(frame: *const sequencer.Frame) bool {
 }
 
 /// What other editor systems ask of the canvas, as rows of `commands.figure_canvas`.
-pub const Request = enum(u8) {
-    /// The figure workspace is being left: cancel what is in hand, as when its panels lose
-    /// the focus, and stop playing the animation.
-    leave_workspace,
-    /// Open the figure or sketch `editor_open` names, in the figure workspace, shown for it, as
-    /// the editor's open system asks for a file chosen to be opened.
-    open_requested,
+pub const Request = union(enum(u8)) {
+    /// The figure stage closed: cancel what is in hand, as when its panels lose the focus, and
+    /// stop playing the animation.
+    stage_closed: void,
+    /// Open the figure or sketch `editor_open` names, in the figure stage, which takes the
+    /// focused window's place, as the editor's open system asks for a file chosen to be opened.
+    open_requested: void,
     /// Make a new figure or sketch of the id `editor_open` names, whose file is its path, written
-    /// at its first save, in the figure workspace, shown for it, as the editor's open system asks
+    /// at its first save, in the figure stage, as the editor's open system asks
     /// for a path typed in find-file that names no file. A name a new document may not take
     /// (`prompts.newNameRefusal`) makes nothing and is told.
-    create_requested,
+    create_requested: void,
+    /// Show the loaded figure of this key in the figure stage, which takes the focused
+    /// window's place, as a buffer chosen to switch to shows in a text window.
+    show_document: Atom,
+    /// Show the open sketch of this key, its first member, as `show_document` shows a figure.
+    show_sketch: Atom,
+    /// Close the loaded figure of this key, as a buffer chosen to kill closes: the one shown
+    /// asks first when it has unsaved changes, as `figure_close` does; another with unsaved
+    /// changes is shown, and told, so that it can be saved or closed; any other closes.
+    close_document: Atom,
 };
 pub const commands_table_name = "commands.figure_canvas";
 pub const Requests = sequencer.Commands(Request);
@@ -228,6 +252,10 @@ pub const Msg = enum(u64) {
     figure_chain_finish = Atom.from("figure_chain_finish").value(),
     figure_gesture_cancel = Atom.from("figure_gesture_cancel").value(),
     figure_view_fit = Atom.from("figure_view_fit").value(),
+    /// Shows Layers beside the stage, or closes it.
+    figure_toggle_layers = Atom.from("figure_toggle_layers").value(),
+    /// Shows Properties beside the stage, or closes it.
+    figure_toggle_properties = Atom.from("figure_toggle_properties").value(),
     figure_view_selection = Atom.from("figure_view_selection").value(),
     figure_view_reset = Atom.from("figure_view_reset").value(),
     figure_zoom_in = Atom.from("figure_zoom_in").value(),
@@ -331,11 +359,14 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
     if (frame.tables.findByName(clock_table) != null) result.read(clock_table);
     // Held input goes on after the answers, as any message would.
     const replays = gesture.heldInput(frame.tables).count() != 0;
-    // Opening the workspace, focus mode and the key panels ask the panels; clearing the
-    // canvas hover asks the status bar. Opening the workspace also shows its fixed panels.
+    // Showing the stage in a window's place, focus mode and the key panels ask the panels;
+    // clearing the canvas hover asks the status bar. Showing the stage, and Layers and
+    // Properties, adds them to the fixed panels shown.
     result.writeIfPresent(frame.tables, Atom.from(plugin.panels.commands_table_name));
-    result.writeIfPresent(frame.tables, Atom.from(workspaces.shown_panels_table_name));
-    result.writeIfPresent(frame.tables, Atom.from(@import("../status_bar.zig").commands_table_name));
+    result.writeIfPresent(frame.tables, Atom.from(fixed_panels.shown_panels_table_name));
+    result.writeIfPresent(frame.tables, Atom.from(status_bar.commands_table_name));
+    // The figure shown, focused, is the latest visited buffer.
+    buffer_list.declareVisits(&result, frame.tables);
     var reads = session.ReadContext{ .tables = frame.tables, .atoms = frame.atoms };
     defer reads.deinit();
     if (selection.stale(&reads)) result.writeAll(&table_groups.selected);
@@ -378,24 +409,55 @@ fn takeRequests(pass: *sequencer.Pass) !void {
 fn applyRequest(pass: *sequencer.Pass, wanted: *const Request) !void {
     const frame = pass.frame;
     switch (wanted.*) {
-        .leave_workspace => {
+        .stage_closed => {
             cancel(frame.tables, frame.atoms);
             focusLost(frame.tables, frame.atoms);
             filmstrip.config(frame.tables).playing.* = 0;
         },
         .open_requested => try openRequested(frame.tables, frame.atoms, .open),
         .create_requested => try openRequested(frame.tables, frame.atoms, .create),
+        .show_document => |doc| {
+            showStage(frame.tables, frame.atoms);
+            finish(frame.tables, frame.atoms);
+            if (doc != session.get(frame.tables).doc.*) prompts.load(frame.tables, frame.atoms, doc, false, null);
+        },
+        .show_sketch => |sketch| {
+            showStage(frame.tables, frame.atoms);
+            finish(frame.tables, frame.atoms);
+            try sketches.open(frame.tables, frame.atoms, sketch, null);
+        },
+        .close_document => |doc| try closeDocument(frame.memory, frame.tables, frame.atoms, doc),
     }
+}
+
+/// `Request.close_document`'s.
+fn closeDocument(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registry, doc: Atom) !void {
+    const editor = session.get(tables);
+    if (doc == editor.doc.*) {
+        finish(tables, atoms);
+        try prompts.requestClose(mem, tables, atoms);
+        return;
+    }
+    const info = session.definitionInfo(tables, atoms, doc) orelse return;
+    if (!info.dirty) {
+        try transport.send(tables, atoms, .{ .close_doc = .{ .doc = doc } });
+        return;
+    }
+    // Asked about only while shown, as `figure_close` asks of the figure shown.
+    showStage(tables, atoms);
+    finish(tables, atoms);
+    prompts.load(tables, atoms, doc, false, null);
+    prompts.inform(session.feedbackTable(tables), session.feedback(tables), "Unsaved changes: save the figure, or C-x k again to close it");
 }
 
 /// Whether a request names a document's file to open or the path of one to make.
 const RequestedFile = enum { open, create };
 
 /// Opens the document `editor_open` names, or makes it new at its path, showing the figure
-/// workspace for it.
+/// stage for it.
 fn openRequested(tables: *Table.Registry, atoms: *Atom.Registry, requested_file: RequestedFile) !void {
     const wanted = open.requested(tables) orelse return;
-    openWorkspace(tables, atoms);
+    showStage(tables, atoms);
     finish(tables, atoms);
     // A request names its file; one with none (an older row) loads the catalog's.
     const path: ?[]const u8 = if (wanted.path.len == 0) null else wanted.path;
@@ -537,7 +599,7 @@ fn goOn(tables: *Table.Registry, atoms: *Atom.Registry, answer: asks.Answer) !vo
 
 /// Hears the time system's frames while information shows, a tool's tap is timed, or a question
 /// that holds input or that a drag waits for is in flight, and the pointer and keys the figure
-/// workspace takes. Run last, by the view, so it subscribes for the frame's final state, which a
+/// stage takes. Run last, by the view, so it subscribes for the frame's final state, which a
 /// subscription collected after the frame read.
 ///
 /// Such a question is given up once it has waited `asks.answer_frames_max` frames
@@ -561,8 +623,7 @@ pub fn subscribe(pass: *sequencer.Pass) !void {
 /// the canvas hears motion anywhere and Space.
 fn subscribeInput(pass: *sequencer.Pass) !void {
     const tables = pass.frame.tables;
-    const atoms = pass.frame.atoms;
-    if (workspaces.activeWorkspace(tables, atoms) != .figure) return;
+    if (!stageShown(tables)) return;
     const pointer_moves = pointerMoves(session.get(tables));
     const observed = session.observed(tables);
     const held: session.PointerOwner = @enumFromInt(observed.pointer_owner.*);
@@ -624,7 +685,7 @@ pub fn actionSystem(tag: Atom) sequencer.System {
 /// `handle`.
 pub fn to(tree: *ui.Tree, tag: Atom, data: anytype) ui.Target {
     if (claimant(tag)) |claiming| return editor_sequencer.to(tree, claiming, tag, data);
-    const editor_messages = @import("../editor.zig").messagesSystem();
+    const editor_messages = editor_mod.messagesSystem();
     return editor_sequencer.to(tree, editor_messages, tag, data);
 }
 
@@ -695,10 +756,10 @@ fn revealTools(observed: session.ObservedView, tag: Atom) void {
     observed.tools_reveal.* = 1;
 }
 
-/// Whether the figure editor's workspace is shown and one of its panels has the keys.
+/// Whether the figure stage is shown and one of the figure editor's panels has the keys.
 fn figureHasKeys(tables: *Table.Registry, atoms: *Atom.Registry) bool {
     const focus = editor_state.viewFocus(tables, atoms).id.*;
-    return workspaces.activeWorkspace(tables, atoms) == .figure and isFigureView(focus);
+    return stageShown(tables) and isFigureView(focus);
 }
 
 /// A tool or mode change, or editing points, waits for the drag to end; then it closes the
@@ -807,9 +868,10 @@ pub const inspector_id = "figure_inspector";
 /// The Animate timeline's panel, open while the editor animates.
 pub const sequencer_id = "figure_sequencer";
 
-/// The figure editor's panels beside its stage: Layers left of it, Properties below Layers.
-/// Constants, so an arrangement listing them is static data.
-pub const outliner_panel: plugin.panels.Open = .{ .id = Atom.from(outliner_id), .root = figure_root, .title = "Layers", .beside = Atom.from(canvas_id), .side = .left, .share = 0.2, .focus = .keep };
+/// The figure editor's panels beside its stage: Layers right of it, near the toggles in its
+/// header, and Properties below Layers. Constants, so an arrangement listing them is static
+/// data.
+pub const outliner_panel: plugin.panels.Open = .{ .id = Atom.from(outliner_id), .root = figure_root, .title = "Layers", .beside = Atom.from(canvas_id), .side = .right, .share = 0.2, .focus = .keep };
 pub const inspector_panel: plugin.panels.Open = .{ .id = Atom.from(inspector_id), .root = figure_root, .title = "Properties", .beside = Atom.from(outliner_id), .side = .bottom, .share = 0.55, .focus = .keep };
 /// The sequencer, below the figure stage: shown while the editor animates (`view.syncSequencer`).
 pub const sequencer_panel: plugin.panels.Open = .{ .id = Atom.from(sequencer_id), .root = figure_root, .title = "Sequencer", .beside = Atom.from(canvas_id), .side = .bottom, .share = 0.32, .focus = .keep };
@@ -855,6 +917,8 @@ const canvas_actions = [_]plugin.action_api.Def{
     .{ .name = "chain_finish", .tag = @tagName(Msg.figure_chain_finish), .doc = "Finish the chain or edit the selected path" },
     .{ .name = "gesture_cancel", .tag = @tagName(Msg.figure_gesture_cancel), .doc = "Cancel the gesture and roll back an unfinished chain" },
     .{ .name = "view_fit", .tag = @tagName(Msg.figure_view_fit), .doc = "Zoom to fit the figure" },
+    .{ .name = "toggle_layers", .tag = @tagName(Msg.figure_toggle_layers), .doc = "Show or hide the Layers panel" },
+    .{ .name = "toggle_properties", .tag = @tagName(Msg.figure_toggle_properties), .doc = "Show or hide the Properties panel" },
     .{ .name = "view_selection", .tag = @tagName(Msg.figure_view_selection), .doc = "Zoom to the selection" },
     .{ .name = "view_reset", .tag = @tagName(Msg.figure_view_reset), .doc = "Zoom to 100%" },
     .{ .name = "zoom_in", .tag = @tagName(Msg.figure_zoom_in), .doc = "Zoom in" },
@@ -887,8 +951,11 @@ const canvas_actions = [_]plugin.action_api.Def{
 
 pub const actions = canvas_actions ++ sketches.actions ++ drawing.actions ++ color_picker.actions ++ weight.actions ++ pose.actions ++ filmstrip.actions;
 
-/// The figure editor's keys, of the mode `figure`, over `global`'s. Its `C-x` hides `global`'s
-/// chords that begin with it while a figure panel has the focus.
+/// The figure editor's keys, of the mode `figure`, over `global`'s. Its editing keys are Emacs's,
+/// as the text editor's are by default (`text_editor.text_keys`): `C-w`, `M-w` and `C-y` cut, copy
+/// and paste, `C-/` and `C-x u` undo, `C-x C-s` saves and `C-g` cancels, and its own commands
+/// that take a modifier are under `C-c`, so `global`'s `C-x` chords reach a figure panel. The
+/// common keys are `figure_cua_keys`, over these while the setting chooses them.
 pub const figure_keys = [_]mesha.keybinds.KeyDef{
     .{ .chord = "v", .action = .{ "figure", "tool_select" } },
     .{ .chord = "h", .action = .{ "figure", "tool_hand" } },
@@ -906,21 +973,24 @@ pub const figure_keys = [_]mesha.keybinds.KeyDef{
     .{ .chord = "S-i", .action = .{ "figure", "tool_ik" } },
     .{ .chord = "e", .action = .{ "figure", "tool_eraser" } },
     .{ .chord = "x", .action = .{ "figure", "color_target_toggle" } },
+    .{ .chord = "C-/", .action = .{ "figure", "undo" } },
     .{ .chord = "C-z", .action = .{ "figure", "undo" } },
+    .{ .chord = "C-x u", .action = .{ "figure", "undo" } },
     .{ .chord = "C-S-z", .action = .{ "figure", "redo" } },
-    .{ .chord = "C-c", .action = .{ "figure", "copy" } },
-    .{ .chord = "C-x", .action = .{ "figure", "cut" } },
-    .{ .chord = "C-v", .action = .{ "figure", "paste" } },
+    .{ .chord = "C-S-/", .action = .{ "figure", "redo" } },
+    .{ .chord = "C-w", .action = .{ "figure", "cut" } },
+    .{ .chord = "M-w", .action = .{ "figure", "copy" } },
+    .{ .chord = "C-y", .action = .{ "figure", "paste" } },
     .{ .chord = "C-d", .action = .{ "figure", "duplicate" } },
-    .{ .chord = "C-a", .action = .{ "figure", "select_all" } },
+    .{ .chord = "C-x h", .action = .{ "figure", "select_all" } },
     .{ .chord = "M-a", .action = .{ "figure", "deselect" } },
     .{ .chord = "page_down", .action = .{ "figure", "select_next" } },
     .{ .chord = "page_up", .action = .{ "figure", "select_previous" } },
     .{ .chord = "delete", .action = .{ "figure", "delete_bone" } },
     .{ .chord = "backspace", .action = .{ "figure", "delete_bone" } },
     .{ .chord = "C-delete", .action = .{ "figure", "delete_branch" } },
-    .{ .chord = "C-g", .action = .{ "figure", "folder_group" } },
-    .{ .chord = "C-S-g", .action = .{ "figure", "folder_ungroup" } },
+    .{ .chord = "C-c C-g", .action = .{ "figure", "folder_group" } },
+    .{ .chord = "C-c C-u", .action = .{ "figure", "folder_ungroup" } },
     .{ .chord = "C-S-n", .action = .{ "figure", "layer_add" } },
     .{ .chord = "C-right_bracket", .action = .{ "figure", "shape_forward" } },
     .{ .chord = "C-left_bracket", .action = .{ "figure", "shape_backward" } },
@@ -940,6 +1010,7 @@ pub const figure_keys = [_]mesha.keybinds.KeyDef{
     .{ .chord = "S-down", .action = .{ "figure", "nudge_down_large" } },
     .{ .chord = "enter", .action = .{ "figure", "chain_finish" } },
     .{ .chord = "escape", .action = .{ "figure", "gesture_cancel" } },
+    .{ .chord = "C-g", .action = .{ "figure", "gesture_cancel" } },
     .{ .chord = "S-1", .action = .{ "figure", "view_fit" } },
     .{ .chord = "home", .action = .{ "figure", "view_fit" } },
     .{ .chord = "S-2", .action = .{ "figure", "view_selection" } },
@@ -949,9 +1020,8 @@ pub const figure_keys = [_]mesha.keybinds.KeyDef{
     .{ .chord = "C-minus", .action = .{ "figure", "zoom_out" } },
     .{ .chord = "C-apostrophe", .action = .{ "figure", "toggle_grid" } },
     .{ .chord = "C-semicolon", .action = .{ "figure", "toggle_bones" } },
-    .{ .chord = "C-s", .action = .{ "figure", "save" } },
-    .{ .chord = "C-S-s", .action = .{ "figure", "save_as" } },
-    .{ .chord = "C-w", .action = .{ "figure", "close" } },
+    .{ .chord = "C-x C-s", .action = .{ "figure", "save" } },
+    .{ .chord = "C-x C-w", .action = .{ "figure", "save_as" } },
     .{ .chord = "tab", .action = .{ "figure", "focus_mode" } },
     .{ .chord = "f6", .action = .{ "figure", "key_panel_next" } },
     .{ .chord = "1", .action = .{ "figure", "mode_design" } },
@@ -964,6 +1034,29 @@ pub const figure_keys = [_]mesha.keybinds.KeyDef{
     .{ .chord = "2", .action = .{ "figure", "mode_rig" } },
     .{ .chord = "3", .action = .{ "figure", "mode_animate" } },
     .{ .chord = "w", .action = .{ "figure", "mode_weight" } },
+};
+
+/// The common keys, as drawing programs have them: the keymap of the minor mode `figure_cua`,
+/// which is over `figure`'s in a figure panel while the setting of the keys the text editors
+/// answer chooses them, as `cua` is over a text panel's (`text_editor.cua_keys`). Its `C-x`, cut,
+/// hides `figure`'s and `global`'s chords that begin with it, as `cua`'s does in a text panel, and
+/// its `C-c`, copy, hides `figure`'s `C-c` chords; it unbinds the rest of Emacs's editing keys
+/// that `figure_keys` binds.
+pub const figure_cua_keys = [_]mesha.keybinds.KeyDef{
+    .{ .chord = "C-y", .action = .{ "figure", "redo" } },
+    .{ .chord = "C-c", .action = .{ "figure", "copy" } },
+    .{ .chord = "C-x", .action = .{ "figure", "cut" } },
+    .{ .chord = "C-v", .action = .{ "figure", "paste" } },
+    .{ .chord = "C-a", .action = .{ "figure", "select_all" } },
+    .{ .chord = "C-g", .action = .{ "figure", "folder_group" } },
+    .{ .chord = "C-S-g", .action = .{ "figure", "folder_ungroup" } },
+    .{ .chord = "C-s", .action = .{ "figure", "save" } },
+    .{ .chord = "C-S-s", .action = .{ "figure", "save_as" } },
+    // Emacs's keys of `figure_keys` that the common keys do not have.
+    .{ .chord = "C-/" },
+    .{ .chord = "C-S-/" },
+    .{ .chord = "C-w" },
+    .{ .chord = "M-w" },
 };
 
 /// A tool's action and the tool it chooses: `figure_tool_<tool>`.
@@ -1105,8 +1198,11 @@ pub fn screenToDocument(tables: *Table.Registry, atoms: *Atom.Registry, x: f32, 
     return geometry.toDocument(rect, editor.view_center.*, editor.view_zoom.*, .{ .x = x, .y = y });
 }
 
-pub fn openWorkspace(tables: *Table.Registry, atoms: *Atom.Registry) void {
-    workspaces.arrange(tables, atoms, .figure);
+/// Shows the figure stage in the focused window's place (`fixed_panels.showInPlace`), with
+/// the focus; Layers and Properties open only when asked for (`figure_toggle_layers`,
+/// `figure_toggle_properties`).
+pub fn showStage(tables: *Table.Registry, atoms: *Atom.Registry) void {
+    fixed_panels.showInPlace(tables, atoms, Atom.from(fixed_panels.figure_stage));
 }
 
 fn figureBoundsSettled(tables: *Table.Registry, atoms: *Atom.Registry) bool {
@@ -1224,7 +1320,7 @@ pub fn activate(tables: *Table.Registry, atoms: *Atom.Registry, doc: Atom) void 
         selection.select(tables, atoms, row.view.kind.*, row.view.id.*, true, false);
         break;
     };
-    openWorkspace(tables, atoms);
+    showStage(tables, atoms);
 }
 
 fn releasePointer(observed: session.ObservedView) void {
@@ -2043,6 +2139,50 @@ pub fn contextMenuOpen(menu: context_menu.View) bool {
     return context_menu.isOpen(menu);
 }
 
+/// After the figure the stage showed, `closed`, has closed, as a killed buffer gives its window
+/// to another: the stage shows the figure loaded that was visited latest. With none left, the
+/// stage, while it has the focus, gives its place to the text buffer visited latest
+/// (`text_panel.showBuffer`); with the focus elsewhere, or no text buffer, it closes. A system
+/// that calls it declares `declareAfterClose`.
+pub fn showAfterClose(tables: *Table.Registry, atoms: *Atom.Registry, closed: Atom) void {
+    const scratch = tables.memory.frameScratchAllocator() catch return;
+    const entries = buffer_list.collect(scratch.allocator, tables, atoms) catch return;
+    const documents = session.listDefinitions(tables, atoms) catch return;
+    for (entries) |entry| {
+        if (entry.kind != .figure or entry.id == closed) continue;
+        const ready = for (documents) |document| {
+            if (document.info.definition != entry.id) continue;
+            break document.info.state == .ready and document.info.editor_open;
+        } else false;
+        if (!ready) continue;
+        activate(tables, atoms, entry.id);
+        return;
+    }
+    if (!stageShown(tables)) return;
+    const stage = Atom.from(fixed_panels.figure_stage);
+    // The text panels put a buffer shown from the focused stage in the stage's place, as they
+    // read the focus: the editor's record of it, which a prompt that asked did not take.
+    const focus_kept = tables.findByName(Atom.from(editor_state.view_focus_name)) != null;
+    const stage_focused = focus_kept and editor_state.viewFocus(tables, atoms).id.* == stage;
+    if (stage_focused) for (entries) |entry| {
+        if (entry.kind != .text) continue;
+        text_panel.showBuffer(tables, entry.id, .this_window);
+        return;
+    };
+    fixed_panels.hidePanel(tables, stage);
+}
+
+/// Declares what `reconcileResult` and the catalog's observer write past the figure editor's
+/// tables when a figure closes (`showAfterClose`), for the system that calls them.
+pub fn declareAfterClose(result: *sequencer.Access, tables: *Table.Registry) void {
+    buffer_list.declareListing(result, tables);
+    const focus_table = Atom.from(editor_state.view_focus_name);
+    if (tables.findByName(focus_table) != null) result.read(focus_table);
+    result.writeIfPresent(tables, Atom.from(text_panel.show_requests_table_name));
+    result.writeIfPresent(tables, Atom.from(fixed_panels.shown_panels_table_name));
+    result.writeIfPresent(tables, Atom.from(figure.commands_table_name));
+}
+
 pub fn reconcileResult(tables: *Table.Registry, atoms: *Atom.Registry, metadata: session.Metadata, result: anyerror!?u32) void {
     const editor = session.get(tables);
     const doc = metadata.doc;
@@ -2099,13 +2239,7 @@ pub fn reconcileResult(tables: *Table.Registry, atoms: *Atom.Registry, metadata:
         editor.active_id.* = 0;
         editor.active_bone.* = 0;
         editor.pending_doc.* = session.none;
-        const documents = session.listDefinitions(tables, atoms) catch return;
-        for (documents) |entry| {
-            if (entry.info.state != .ready or !entry.info.editor_open) continue;
-            activate(tables, atoms, entry.info.definition);
-            return;
-        }
-        // Closing a document leaves the Figure workspace available for New/Open.
+        showAfterClose(tables, atoms, doc);
         return;
     }
     if (doc != editor.doc.*) return;
@@ -2356,10 +2490,10 @@ fn handleAction(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Regis
     revealTools(session.observed(tables), tag);
     if (try sketches.handleAction(mem, tables, atoms, received)) return;
     if (message == .figure_open) {
-        // The workspace stays as it is until a figure or a sketch is chosen (`openRequested`).
+        // The panels stay as they are until a figure or a sketch is chosen (`openRequested`).
         finish(tables, atoms);
-        // Find-file opens on the directory of the figure shown, when the figure workspace is
-        // showing and its figure has a file; else on the working directory.
+        // Find-file opens on the directory of the figure shown, when the figure stage is
+        // shown and its figure has a file; else on the working directory.
         const directory = findFileDirectory(tables, atoms);
         open.requestFindFile(tables, directory);
         return;
@@ -2370,7 +2504,7 @@ fn handleAction(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Regis
         return;
     }
     if (message == .figure_new) {
-        openWorkspace(tables, atoms);
+        showStage(tables, atoms);
         finish(tables, atoms);
         try prompts.show(mem, tables, atoms, names.new, try prompts.newName(frame_allocator, tables, atoms));
         return;
@@ -2771,6 +2905,16 @@ fn handleAction(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Regis
             try transport.send(tables, atoms, .{ .transform_selection = .{ .doc = editor.doc.*, .items = items, .pivot = session.zero, .translation = nudge.delta } });
         } else {
             try transport.send(tables, atoms, .{ .move_selection = .{ .doc = editor.doc.*, .items = items, .delta = nudge.delta, .coordinate_policy = .bind } });
+        }
+        return;
+    }
+    if (message == .figure_toggle_layers or message == .figure_toggle_properties) {
+        const panel = if (message == .figure_toggle_layers) outliner_panel.id else inspector_panel.id;
+        // Opened beside the stage where it is arranged; the stage keeps the focus.
+        if (fixed_panels.panelShown(tables, panel)) {
+            fixed_panels.hidePanel(tables, panel);
+        } else {
+            fixed_panels.showPanel(tables, atoms, panel, .arranged, .keep);
         }
         return;
     }

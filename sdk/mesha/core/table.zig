@@ -1425,8 +1425,23 @@ pub const Schema = struct {
     /// atom registry compares the names as atoms (`Atom.from(name)`, which interns nothing), one
     /// without compares text. A linear search.
     pub fn fieldIndex(schema: Schema, name: []const u8) ?usize {
+        const id = Atom.from(name);
+        return schema.findField(id, name);
+    }
+
+    /// As `fieldIndex`, for a name fixed at compile time: its atom is computed in the build, not on
+    /// each call. What row views, inserts and queries use, since they name fields by a type's.
+    pub fn knownFieldIndex(schema: Schema, comptime name: []const u8) ?usize {
+        const id = comptime id: {
+            @setEvalBranchQuota(10_000);
+            break :id Atom.from(name);
+        };
+        return schema.findField(id, name);
+    }
+
+    /// The index of the field whose atom is `id` and whose name is `name`, as `fieldIndex` says.
+    fn findField(schema: Schema, id: Atom, name: []const u8) ?usize {
         if (schema.atoms != null) {
-            const id = Atom.from(name);
             for (schema.fields, 0..) |*field, i| {
                 if (field.name_id == id) return i;
             }
@@ -2703,7 +2718,7 @@ pub fn storedRow(table: *Table, row: u32, comptime View: type, payload_owner: *c
     const schema = table.getSchema();
     var view: View = undefined;
     inline for (std.meta.fields(View)) |vf| {
-        const idx_opt = schema.fieldIndex(vf.name);
+        const idx_opt = schema.knownFieldIndex(vf.name);
         contract.invariant(idx_opt != null, "table.row_view.field_exists");
         const idx = idx_opt.?;
         const field = &schema.fields[idx];
@@ -2745,7 +2760,7 @@ pub fn insert(table: *Table, values: anytype) RowHandle {
 pub fn tryInsert(table: *Table, values: anytype) !RowHandle {
     const handle = try table.alloc();
     inline for (std.meta.fields(@TypeOf(values))) |vf| {
-        const idx_opt = table.getSchema().fieldIndex(vf.name);
+        const idx_opt = table.getSchema().knownFieldIndex(vf.name);
         contract.invariant(idx_opt != null, "table.insert.field_exists");
         const idx = idx_opt.?;
         if (comptime isPayloadSlice(vf.type)) {
@@ -2768,7 +2783,7 @@ pub fn setRowMask(table: *Table, handle: RowHandle, view: anytype) void {
     contract.invariant(table.valid(handle), "table.row_mask.valid_handle");
     var m: Mask = .empty;
     inline for (std.meta.fields(@TypeOf(view))) |vf| {
-        const idx_opt = table.getSchema().fieldIndex(vf.name);
+        const idx_opt = table.getSchema().knownFieldIndex(vf.name);
         contract.invariant(idx_opt != null, "table.row_mask.field_exists");
         const idx = idx_opt.?;
         m.set(table.getSchema().fields[idx].bit);
@@ -2781,7 +2796,7 @@ pub fn setRowMask(table: *Table, handle: RowHandle, view: anytype) void {
 /// the schema lacks, `error.StaleHandle` for a row that is gone; panics when `@sizeOf(T)` is not
 /// the field's size.
 pub fn writeFieldSingle(table: *Table, comptime T: type, handle: RowHandle, comptime name: []const u8, value: T) !void {
-    const idx = table.getSchema().fieldIndex(name) orelse return error.UnknownField;
+    const idx = table.getSchema().knownFieldIndex(name) orelse return error.UnknownField;
     const ptr = table.getFieldByIndex(T, handle, @intCast(idx)) orelse return error.StaleHandle;
     ptr.* = value;
     table.setPresent(handle.row, table.getSchema().fields[idx].bit, true);
@@ -2907,7 +2922,7 @@ pub fn Query(comptime View: type) type {
             var q: Self = .{ .table = table, .required_mask = .empty };
             if (table.journal != null) q.journaled = table.rows();
             inline for (view_fields, 0..) |vf, i| {
-                const idx_opt = table.getSchema().fieldIndex(vf.name);
+                const idx_opt = table.getSchema().knownFieldIndex(vf.name);
                 contract.invariant(idx_opt != null, "table.query.field_exists");
                 const idx = idx_opt.?;
                 q.field_indices[i] = @intCast(idx);
@@ -3472,7 +3487,7 @@ pub const Registry = struct {
         }
         return result;
     }
-    /// Rewrites the `table_memory` table, a report the host refreshes each frame and the inspector
+    /// Rewrites the `table_memory` table, a report the host refreshes every few frames and the inspector
     /// and MCP read as they read any table: a row per live table, itself included, with its name,
     /// slot and generation, owner, lifetime, storage, row count and capacity, and bytes. The table
     /// is made on the first call and cleared on each, so its row handles do not last: match rows by

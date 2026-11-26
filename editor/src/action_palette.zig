@@ -2,6 +2,14 @@ const std = @import("std");
 const mesha = @import("mesha");
 const ui = mesha.ui;
 const sequencer = mesha.sequencer;
+const state = @import("state.zig");
+const style = @import("ui/style.zig");
+const shared = @import("text_editor.zig");
+const modes = @import("modes.zig");
+const panel_frame = @import("panel_frame.zig");
+const editor_sequencer = @import("editor_sequencer.zig");
+const transient = @import("transient.zig");
+const list_navigation = @import("figure/list_navigation.zig");
 const Log = mesha.log.scope("action_palette");
 const plugin_api = mesha.plugin;
 const Atom = mesha.Atom;
@@ -9,17 +17,10 @@ const memory_mod = mesha.memory;
 const Table = mesha.Table;
 const math = mesha.math;
 const input = mesha.input;
-const state = @import("state.zig");
-const style = @import("ui/style.zig");
 const editor_api = plugin_api.editor_api;
 const app_commands = plugin_api.app_commands;
 const keybinds = mesha.keybinds;
-const shared = @import("text_editor.zig");
-const modes = @import("modes.zig");
 const panels_mod = mesha.panels;
-const panel_frame = @import("panel_frame.zig");
-const editor_sequencer = @import("editor_sequencer.zig");
-const transient = @import("transient.zig");
 
 /// The action palette's root: its keys, clicks and text editor. No panel has it.
 pub const action_palette_root = Atom.from("action_palette");
@@ -31,25 +32,40 @@ pub const eventOf = editor_api.eventOf;
 
 pub const table_name = "editor_action_palette";
 
-const kRowHeight: f32 = 40;
-
-const kBodyHeight: f32 = 26;
-
-pub const kMaxRows: usize = 10;
+/// A completion's row.
+const kRowHeight: f32 = style.metric.control_height;
+/// A prompt's body: a line of text above what it offers.
+const kBodyHeight: f32 = style.metric.text_line;
+/// How many rows PageUp and PageDown move the selection.
+const kPageRows: i32 = 10;
 
 pub const kBufSize: usize = editor_api.kBufSize;
 pub const kCompletionDataSize: usize = editor_api.kCompletionDataSize;
 
-const kKeyColWidth: f32 = 110;
-const kDetailColWidth: f32 = 250;
-/// The minibuffer's line, along the window's bottom.
-const kMinibufferHeight: f32 = 40;
+/// The minibuffer's line, along the window's bottom, and at the top of what opens over it.
+const kMinibufferHeight: f32 = style.metric.bar_height;
 const kSectionPadding: f32 = 8;
 const kSectionGap: f32 = 6;
-/// A dialog's button, which does not stretch across the window.
-const kButtonWidth: f32 = 140;
-/// The most of the window's height the minibuffer and what opens above it cover.
-const kMaxWindowShare: f32 = 0.6;
+/// The room on each side of the rule between a dialog's body and the answer typed, beside the
+/// line's own gap.
+const kLineSeparatorGap: f32 = 6;
+/// The rule's height: about a line of text's, inside the minibuffer's line.
+const kLineSeparatorHeight: f32 = style.metric.text_line * 0.75;
+/// The most of the window's height the minibuffer and what opens with it cover; past it the
+/// completions scroll.
+const kMaxWindowShare: f32 = 0.5;
+/// Between the columns of the completion grid.
+const kColumnGap: f32 = 16;
+/// Between a completion row's edge and its first and last column.
+const kRowPadding: f32 = 8;
+/// The most of the grid's width the names' column and the keys' column take, when a
+/// description shares the row.
+const kMaxLabelShare: f32 = 0.4;
+const kMaxShortcutShare: f32 = 0.25;
+/// The scroll bar beside the completions while some are out of sight.
+const kScrollBarWidth: f32 = 4;
+const kScrollBarGap: f32 = 4;
+const kMinThumbHeight: f32 = 16;
 
 pub const CmdPayload = editor_api.CmdPayload;
 
@@ -102,10 +118,6 @@ pub const State = struct {
 
     /// Counts the requests presented, so the text editor a request names is loaded once each.
     request_serial: *u32,
-    /// Whether the open request takes text, which the palette's text editor holds. Kept here
-    /// because the request itself may be rebuilt, and its memory reset, before the palette
-    /// takes the new one.
-    request_takes_text: *u8,
     /// The request the text editor holds the text of; 0 for none.
     editor_loaded_serial: *u32,
     /// A submit awaits the text editor's report of its last text.
@@ -216,6 +228,7 @@ pub fn ownRequestText(allocator: std.mem.Allocator, completions: *Completions) e
         entry.key = try allocator.dupe(u8, source.key);
         entry.label = try allocator.dupe(u8, source.label);
         entry.detail = try allocator.dupe(u8, source.detail);
+        entry.shortcut = try allocator.dupe(u8, source.shortcut);
         if (source.completes_to) |text| entry.completes_to = try allocator.dupe(u8, text);
     }
     completions.entries = entries;
@@ -239,7 +252,6 @@ const defaults = .{
     .tab_label = Table.String{},
     .tab_typing = @as(u8, 0),
     .request_serial = @as(u32, 0),
-    .request_takes_text = @as(u8, 0),
     .editor_loaded_serial = @as(u32, 0),
     .editor_submit_pending = @as(u8, 0),
     .editor_serial = @as(u32, 0),
@@ -274,7 +286,6 @@ fn stateSchema(schema: *Table.Schema) !void {
     try schema.addFieldFallible("tab_label", Table.String, .text_field);
     try schema.addFieldFallible("tab_typing", u8, .int);
     try schema.addFieldFallible("request_serial", u32, .int);
-    try schema.addFieldFallible("request_takes_text", u8, .int);
     try schema.addFieldFallible("editor_loaded_serial", u32, .int);
     try schema.addFieldFallible("editor_submit_pending", u8, .int);
     try schema.addFieldFallible("editor_serial", u32, .int);
@@ -443,6 +454,14 @@ pub fn canPresent(tables: *Table.Registry, atoms: *Atom.Registry) bool {
 
 pub fn requestOpen(tables: *Table.Registry, atoms: *Atom.Registry) bool {
     return prompt(tables, atoms).request_open.* != 0;
+}
+
+/// Whether a prompt the minibuffer draws is open, which has the keyboard: one its requester
+/// draws as a field of its own does not count.
+pub fn minibufferHasKeyboard(tables: *Table.Registry, atoms: *Atom.Registry) bool {
+    const s = prompt(tables, atoms);
+    const inline_field = @intFromEnum(Completions.Presentation.inline_field);
+    return s.request_open.* != 0 and s.request_presentation.* != inline_field;
 }
 
 const Refusal = enum { awaiting_acknowledgement, response_held };
@@ -620,7 +639,7 @@ fn takeEcho(tables: *Table.Registry, s: State) void {
     s.echo.* = .{};
 }
 
-/// While a prompt is open, its keys and typing, and with none the key that ends an echo, for
+/// While a prompt is open, its keys and typing, and with none the key or click that ends an echo, for
 /// the input system's inbox. Last of the editor's systems, so a prompt opened this frame hears
 /// the next frame's keys.
 fn subscribe(pass: *sequencer.Pass) !void {
@@ -628,10 +647,13 @@ fn subscribe(pass: *sequencer.Pass) !void {
     if (!pass.writes(editor_sequencer.InputSubscriber.table)) return;
     const inputs = editor_sequencer.InputSubscriber.of(pass, inputSystem());
     if (currentCompletions(tables, pass.frame.atoms) == null) {
-        // With no prompt, an echo on the line hears the next key, which takes it away. The
-        // key still goes wherever it was going.
+        // With no prompt, an echo on the line hears the next key or click, which takes it
+        // away. The key or click still goes wherever it was going.
         const observed = try pass.readSingleton(state_table, State);
-        if (observed.echo.payload.len != 0) inputs.push(.{ .key_input = .{ .scope = .global, .tag = echo_key_tag } }, .none);
+        if (observed.echo.payload.len != 0) {
+            inputs.push(.{ .key_input = .{ .scope = .global, .tag = echo_end_tag } }, .none);
+            inputs.push(.{ .mouse_button_down = .{ .scope = .global, .tag = echo_end_tag } }, .none);
+        }
         return;
     }
     subscribeInput(tables, pass.frame.atoms, inputs);
@@ -669,8 +691,9 @@ const bindings_table = Atom.from(plugin_api.action_api.bindings_table_name);
 const time_subscriptions = Atom.from(mesha.time.subscriptions_table_name);
 /// A frame's time while a key sequence waits for its hints.
 const key_frame_tag = Atom.from("action_palette_key_frame");
-/// A key pressed while the line shows an echo, which goes at the next key as Emacs's does.
-const echo_key_tag = Atom.from("action_palette_echo_key");
+/// A key or a button pressed while the line shows an echo, which goes at the next one, as
+/// Emacs's goes at the next key.
+const echo_end_tag = Atom.from("action_palette_echo_end");
 
 fn inputAccess(frame: *const sequencer.Frame) sequencer.Access {
     var result: sequencer.Access = .{};
@@ -713,12 +736,12 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
     return result;
 }
 
-const prompt_tags = [_]Atom{ Msg.char, Msg.left, Msg.right, Msg.up, Msg.down, Msg.submit, Msg.cancel, Msg.consume, Msg.invoke, scroll_tag };
+const prompt_tags = [_]Atom{ Msg.char, Msg.submit, Msg.cancel, Msg.consume, Msg.invoke, scroll_tag };
 const prompt_action_tags = plugin_api.action_api.tags(&prompt_actions);
 const text_editor_tags = [_]Atom{ shared.command_tag, shared.save_tag, shared.leave_tag };
 
 fn claims(tag: Atom) bool {
-    if (tag == echo_key_tag) return true;
+    if (tag == echo_end_tag) return true;
     if (std.mem.indexOfScalar(Atom, &prompt_tags, tag) != null) return true;
     if (std.mem.indexOfScalar(Atom, &prompt_action_tags, tag) != null) return true;
     return std.mem.indexOfScalar(Atom, &text_editor_tags, tag) != null;
@@ -730,7 +753,7 @@ fn takeMessages(pass: *sequencer.Pass) !void {
     if (frame.messages.len == 0) return;
     const s = try pass.writeSingleton(state_table, State);
     for (frame.messages) |received| {
-        if (received.tag == echo_key_tag) {
+        if (received.tag == echo_end_tag) {
             // What a key's own command tells is taken after it, from `*Messages*`.
             s.echo.* = .{};
             continue;
@@ -763,7 +786,6 @@ const Taking = struct {
                 s.request_owner.* = replacement.completions.owner;
                 s.request_presentation.* = @intFromEnum(replacement.completions.presentation);
                 s.completions_ptr.* = @intFromPtr(replacement.completions);
-                s.request_takes_text.* = @intFromBool(replacement.completions.presentation.takesText());
                 // Listed anew for the text Tab made: the entry it was made from stays selected.
                 const palette = paletteTable(taking.tables);
                 if (followsTab(palette, s)) selectCompleted(palette, s, replacement.completions);
@@ -829,11 +851,10 @@ const Taking = struct {
         // A new request: the text editor it names loads its text afresh.
         s.request_serial.* +%= 1;
         s.editor_submit_pending.* = 0;
-        s.request_takes_text.* = @intFromBool(completions.presentation.takesText());
         if (completions.presentation == .dialog) s.selected.* = completions.default_entry orelse std.math.maxInt(u32);
         setText(paletteTable(taking.tables), s, completions.initial_query);
         const replaces_seed = completions.initial_query_edit == .replace;
-        s.text_selected.* = @intFromBool(completions.presentation.takesText() and s.text.payload.len != 0 and replaces_seed);
+        s.text_selected.* = @intFromBool(s.text.payload.len != 0 and replaces_seed);
     }
 
     /// A refused prompt's owner hears `completed` with nothing chosen, as for a cancel.
@@ -891,18 +912,22 @@ fn takeRequests(pass: *sequencer.Pass) !void {
 //
 // The palette draws as Emacs's minibuffer does: a line along the window's bottom, always there,
 // which the panels leave room for and a prompt's text is typed in. What a prompt offers, its
-// completions or a dialog's buttons, opens above the line, over the panels, which keep their
-// sizes. A stage alone in the window keeps all of it: the line shows only while a prompt is
-// open, over the stage.
+// completions, opens with it: the minibuffer grows up over the panels, which keep their sizes,
+// to half the window at most, its line at the top and the offer below it. A dialog's answers
+// are its completions. It keeps the panels' gap (`panels.kGap`) around it, as a panel does. A
+// maximized panel, and a stage alone in the window, keep all of it: the minibuffer is hidden
+// then, and shows over the panel only while a prompt or a transient menu is open, or while it
+// tells something (an echo, the keys of a sequence), which the next key or click takes away.
 
-/// The room the panels leave the minibuffer's line: none for a stage alone in the window, or
-/// without the panels, as in a headless run.
+/// The room the panels leave the minibuffer's line and the gap below it: none for a maximized
+/// panel or a stage alone in the window, both of which wear no header, or without the panels,
+/// as in a headless run.
 fn lineRoom(tables: *Table.Registry, atoms: *Atom.Registry) f32 {
     if (tables.findByName(panel_nodes_table) == null) return 0;
     var shown_buffer: [panels_mod.kMaxPanels]panels_mod.Panel = undefined;
     const shown = panels_mod.panels(tables, atoms, &shown_buffer);
-    const lone_stage = shown.len == 1 and !panel_frame.wearsHeader(tables, atoms, shown[0].id);
-    return if (lone_stage) 0 else kMinibufferHeight;
+    const alone_bare = shown.len == 1 and !panel_frame.wearsHeader(tables, atoms, shown[0].id);
+    return if (alone_bare) 0 else kMinibufferHeight + panels_mod.kGap;
 }
 
 /// Each frame: asks the panels for the line's room, when the panels shown change it.
@@ -928,19 +953,69 @@ fn resetPrompt(s: State) void {
 fn clampSelection(pass: *sequencer.Pass) !void {
     const observed = try pass.readSingleton(state_table, State);
     const completions = completionsOf(observed) orelse return;
-    const wanted = shownSelection(observed.selected.*, completions);
+    const listing = Listing.of(paletteTable(pass.frame.tables), observed, completions);
+    const wanted = shownSelection(observed.selected.*, listing);
     if (wanted == observed.selected.*) return;
     const s = try pass.writeSingleton(state_table, State);
     s.selected.* = wanted;
 }
 
-/// The entry `selected` stands for among `completions`' entries: a dialog's as it is, which
-/// may be none; a prompt's at most its last, and 0 when it lists none.
-fn shownSelection(selected: u32, completions: *const Completions) u32 {
-    if (completions.presentation == .dialog) return selected;
-    if (completions.entries.len == 0) return 0;
-    const last: u32 = @intCast(completions.entries.len - 1);
-    return @min(selected, last);
+/// The entry `selected` stands for among those `listing` lists: a dialog's as it is, which may
+/// be none; a prompt's at most its last, and 0 when it lists none.
+fn shownSelection(selected: u32, listing: Listing) u32 {
+    if (listing.completions.presentation == .dialog) return selected;
+    const count = listing.count();
+    if (count == 0) return 0;
+    return @min(selected, count - 1);
+}
+
+/// The entries the open request lists for its text: a dialog's those whose label holds the
+/// text, ignoring case, in their order, which the palette narrows itself; any other request's
+/// all of them, which its owner listed for the text. A selection, and a click's index, count
+/// among these. Borrows the request's entries and the palette's text, both as `of` found them.
+const Listing = struct {
+    completions: *const Completions,
+    text: []const u8,
+
+    fn of(palette: *const Table, s: State, completions: *const Completions) Listing {
+        return .{ .completions = completions, .text = textOf(palette, s) };
+    }
+
+    fn lists(listing: Listing, entry: *const Completion) bool {
+        if (listing.completions.presentation != .dialog) return true;
+        return ui.filter_field.matches(listing.text, entry.label);
+    }
+
+    /// How many entries it lists.
+    fn count(listing: Listing) u32 {
+        if (listing.completions.presentation != .dialog) return @intCast(listing.completions.entries.len);
+        var listed: u32 = 0;
+        for (listing.completions.entries) |*entry| {
+            if (listing.lists(entry)) listed += 1;
+        }
+        return listed;
+    }
+
+    /// The entry it lists at `index`; null past the last.
+    fn at(listing: Listing, index: u32) ?*const Completion {
+        var remaining = index;
+        for (listing.completions.entries) |*entry| {
+            if (!listing.lists(entry)) continue;
+            if (remaining == 0) return entry;
+            remaining -= 1;
+        }
+        return null;
+    }
+};
+
+/// The entries `listing` lists, as one slice: a prompt's own, or a dialog's narrowed into
+/// `allocator`'s memory; none when that cannot hold them.
+fn listedEntries(allocator: std.mem.Allocator, listing: Listing) []const Completion {
+    if (listing.completions.presentation != .dialog) return listing.completions.entries;
+    const listed = allocator.alloc(Completion, listing.count()) catch return &.{};
+    var index: u32 = 0;
+    while (listing.at(index)) |entry| : (index += 1) listed[index] = entry.*;
+    return listed;
 }
 
 fn deleteSelectedText(s: State) void {
@@ -971,6 +1046,9 @@ fn finishEdit(palette: *const Table, s: State, before: TextFingerprint, tables: 
     } else if (s.tab_typing.* == 0) {
         forgetTab(s);
     }
+    // A dialog's answers are narrowed here, not by its owner.
+    const narrowed_here = if (completions) |listed| listed.presentation == .dialog else false;
+    if (narrowed_here) return;
     queueEvent(tables, replyOf(palette, s), .query_changed, null, textOf(palette, s));
 }
 
@@ -979,10 +1057,10 @@ fn finishEdit(palette: *const Table, s: State, before: TextFingerprint, tables: 
 fn takeKey(tables: *Table.Registry, s: State, received: sequencer.Message) !void {
     const tag = received.tag;
     const completions = completionsOf(s) orelse return;
+    const listing = Listing.of(paletteTable(tables), s, completions);
     if (tag == scroll_tag) {
-        if (!completions.presentation.takesText()) return;
         const event = try received.payloadAs(input.MouseScrollMsg);
-        s.selected.* = @import("figure/list_navigation.zig").wheel(s.selected.*, event.y, completions.entries.len -| 1);
+        s.selected.* = list_navigation.wheel(s.selected.*, event.y, listing.count() -| 1);
         forgetTab(s);
         return;
     }
@@ -990,23 +1068,14 @@ fn takeKey(tables: *Table.Registry, s: State, received: sequencer.Message) !void
     if (tag == Msg.consume) return;
     if (tag == Msg.invoke) {
         const payload = try received.userDataAs(CompletionPayload);
-        if (payload.index < completions.entries.len) completeRequest(tables, s, &completions.entries[payload.index]);
+        if (listing.at(payload.index)) |entry| completeRequest(tables, s, entry);
         return;
     }
-    if (completions.presentation == .dialog) {
-        if (completions.entries.len == 0) return;
-        const last: u32 = @intCast(completions.entries.len - 1);
-        if (tag == Msg.up or tag == Msg.left) s.selected.* = if (s.selected.* > last) last else s.selected.* -| 1;
-        if (tag == Msg.down or tag == Msg.right) s.selected.* = if (s.selected.* > last) 0 else @min(last, s.selected.* +| 1);
-        if (tag == Msg.submit and s.selected.* <= last) completeRequest(tables, s, &completions.entries[s.selected.*]);
-        return;
-    }
-    if (!completions.presentation.takesText()) return;
 
     if (tag == Msg.char) {
         const m = try received.payloadAs(input.TextInputMsg);
         if (m.codepoint < 32 or m.codepoint == 127) return;
-        if (holdingEditor(s, completions)) |editor| {
+        if (holdingEditor(s)) |editor| {
             var bytes: [4]u8 = undefined;
             const utf8 = input.typedText(m, &bytes) orelse return;
             plugin_api.text_editor_api.request(tables.memory, tables, .{ .insert = .{ .buffer = editor, .utf8 = utf8 } });
@@ -1026,21 +1095,23 @@ fn takeKey(tables: *Table.Registry, s: State, received: sequencer.Message) !void
     if (tag == Msg.submit) requestSubmit(tables, s, completions);
 }
 
-/// Completes with the selected entry, as a submit does.
+/// Completes with the selected entry, as a submit does; a dialog with none selected, or none
+/// its text holds, stays open.
 fn submitSelected(s: State, completions: *const Completions, tables: *Table.Registry) void {
-    if (completions.entries.len == 0) {
+    const listing = Listing.of(paletteTable(tables), s, completions);
+    if (listing.count() == 0) {
         if (!completions.accepts_text) return;
         const typed: Completion = .{ .label = "" };
         return completeRequest(tables, s, &typed);
     }
-    const index = @min(s.selected.*, @as(u32, @intCast(completions.entries.len - 1)));
-    completeRequest(tables, s, &completions.entries[index]);
+    const entry = listing.at(shownSelection(s.selected.*, listing)) orelse return;
+    completeRequest(tables, s, entry);
 }
 
 /// Submits now, or, while a text editor holds the text, once its report of its last text has
 /// come in, so the completion carries everything typed.
 fn requestSubmit(tables: *Table.Registry, s: State, completions: *const Completions) void {
-    const editor = holdingEditor(s, completions) orelse return submitSelected(s, completions, tables);
+    const editor = holdingEditor(s) orelse return submitSelected(s, completions, tables);
     s.editor_submit_pending.* = 1;
     plugin_api.text_editor_api.request(tables.memory, tables, .{ .mark_saved = editor });
 }
@@ -1087,13 +1158,12 @@ pub const text_editor_name = Atom.from("prompt_text");
 
 /// The text editor, while the open request takes text, from the palette's own record.
 fn requestEditor(s: State) ?Atom {
-    if (s.request_open.* == 0 or s.request_takes_text.* == 0) return null;
+    if (s.request_open.* == 0) return null;
     return text_editor_name;
 }
 
 /// The text editor, while it holds this request's text.
-fn holdingEditor(s: State, completions: *const Completions) ?Atom {
-    if (!completions.presentation.takesText()) return null;
+fn holdingEditor(s: State) ?Atom {
     if (s.editor_loaded_serial.* != s.request_serial.*) return null;
     return text_editor_name;
 }
@@ -1153,7 +1223,7 @@ pub fn pushPromptActions(tables: *Table.Registry, atoms: *Atom.Registry, sink: p
 /// changed, and finish a submit that waited for it.
 fn onEditorText(s: State, text: []const u8, tables: *Table.Registry) void {
     const completions = completionsOf(s) orelse return;
-    _ = holdingEditor(s, completions) orelse return;
+    _ = holdingEditor(s) orelse return;
     const palette = paletteTable(tables);
     if (!std.mem.eql(u8, text, textOf(palette, s))) {
         const before = textFingerprint(palette, s);
@@ -1173,14 +1243,14 @@ fn onEditorText(s: State, text: []const u8, tables: *Table.Registry) void {
 fn completeText(tables: *Table.Registry, s: State, completions: *const Completions) void {
     const palette = paletteTable(tables);
     const text = textOf(palette, s);
-    const entry = selectedEntry(s, completions) orelse return;
+    const entry = selectedEntry(Listing.of(palette, s, completions), s) orelse return;
     const target = tabTarget(entry);
     if (std.mem.eql(u8, text, target)) return;
     // The text's slice is the table's, which remembering may move: it is not read again.
     rememberTab(palette, s, target, entry.label);
     // The text editor holds the text: it types the completion over all of it, an edit undo
     // takes back, and its report brings the text here. Reports of earlier keys may come first.
-    if (holdingEditor(s, completions)) |editor| {
+    if (holdingEditor(s)) |editor| {
         plugin_api.text_editor_api.request(tables.memory, tables, .{ .run = .{ .buffer = editor, .command = .select_all } });
         plugin_api.text_editor_api.request(tables.memory, tables, .{ .insert = .{ .buffer = editor, .utf8 = target } });
         return;
@@ -1190,13 +1260,11 @@ fn completeText(tables: *Table.Registry, s: State, completions: *const Completio
     finishEdit(palette, s, before, tables);
 }
 
-/// The entry Tab completes the text to: the one selected, in a prompt whose Tab completes the
-/// selection; none in a dialog, or with none selected.
-fn selectedEntry(s: State, completions: *const Completions) ?*const Completion {
-    if (completions.tab == .nothing) return null;
-    if (completions.presentation == .dialog) return null;
-    if (s.selected.* >= completions.entries.len) return null;
-    return &completions.entries[s.selected.*];
+/// The entry Tab completes the text to: the one selected among those `listing` lists, in a
+/// request whose Tab completes the selection; none with none selected.
+fn selectedEntry(listing: Listing, s: State) ?*const Completion {
+    if (listing.completions.tab == .nothing) return null;
+    return listing.at(s.selected.*);
 }
 
 /// What Tab makes the text when `entry` is selected.
@@ -1236,21 +1304,24 @@ fn followsTab(palette: *const Table, s: State) bool {
 /// Selects the entry of `completions` Tab made the text from: the one with its label whose
 /// completion the text is; the first entry when none is.
 fn selectCompleted(palette: *const Table, s: State, completions: *const Completions) void {
-    const text = textOf(palette, s);
+    const listing = Listing.of(palette, s, completions);
     const label = palette.textOf(s.tab_label.*);
     s.selected.* = 0;
-    for (completions.entries, 0..) |*entry, index| {
+    var index: u32 = 0;
+    while (listing.at(index)) |entry| : (index += 1) {
         if (!std.mem.eql(u8, entry.label, label)) continue;
-        if (!std.mem.eql(u8, tabTarget(entry), text)) continue;
-        s.selected.* = @intCast(index);
+        if (!std.mem.eql(u8, tabTarget(entry), listing.text)) continue;
+        s.selected.* = index;
         return;
     }
 }
 
-/// Moves the completion selection by `step` entries, clamped to the list.
-fn stepSelection(s: State, completions: *const Completions, step: i32) void {
-    if (completions.entries.len == 0) return;
-    const last: i64 = @intCast(completions.entries.len - 1);
+/// Moves the completion selection by `step` entries among those `listing` lists, clamped to
+/// them.
+fn stepSelection(s: State, listing: Listing, step: i32) void {
+    const count = listing.count();
+    if (count == 0) return;
+    const last: i64 = count - 1;
     const current: i64 = if (s.selected.* > last) (if (step > 0) -1 else last + 1) else s.selected.*;
     s.selected.* = @intCast(std.math.clamp(current + step, 0, last));
     forgetTab(s);
@@ -1262,9 +1333,10 @@ fn takeAction(tables: *Table.Registry, s: State, received: sequencer.Message) !v
     const tag = received.tag;
     _ = requestEditor(s) orelse return;
     const completions = completionsOf(s) orelse return;
+    const listing = Listing.of(paletteTable(tables), s, completions);
     if (tag == shared.command_tag) {
         // Until the editor holds the request, it holds something else: the key is dropped.
-        const editor = holdingEditor(s, completions) orelse return;
+        const editor = holdingEditor(s) orelse return;
         const command = try shared.commandOf(received);
         plugin_api.text_editor_api.request(tables.memory, tables, .{ .run = .{ .buffer = editor, .command = command } });
     } else if (tag == shared.save_tag) {
@@ -1274,43 +1346,30 @@ fn takeAction(tables: *Table.Registry, s: State, received: sequencer.Message) !v
     } else if (tag == Atom.from("prompt_cancel") or tag == shared.leave_tag) {
         completeRequest(tables, s, null);
     } else if (tag == Atom.from("prompt_next")) {
-        stepSelection(s, completions, 1);
+        stepSelection(s, listing, 1);
     } else if (tag == Atom.from("prompt_complete")) {
         completeText(tables, s, completions);
     } else if (tag == Atom.from("prompt_previous")) {
-        stepSelection(s, completions, -1);
+        stepSelection(s, listing, -1);
     } else if (tag == Atom.from("prompt_page_down")) {
-        stepSelection(s, completions, kMaxRows);
+        stepSelection(s, listing, kPageRows);
     } else if (tag == Atom.from("prompt_page_up")) {
-        stepSelection(s, completions, -@as(i32, kMaxRows));
+        stepSelection(s, listing, -kPageRows);
     }
 }
 
 /// The open prompt's keys and typing, for the input system's inbox.
 fn subscribeInput(tables: *Table.Registry, atoms: *Atom.Registry, inputs: editor_sequencer.InputSubscriber) void {
-    const completions = currentCompletions(tables, atoms) orelse return;
-    if (completions.presentation.takesText()) {
-        // Every other key is an action's: the text editor's and the prompt's own, listed by
-        // `pushPromptActions`.
-        // The palette opens over any panel, so it takes the keyboard wherever the focus is.
-        inputs.push(.{ .text_input = .{
-            .scope = .global,
-            .capture = true,
-            .modifiers = .{ .control = .forbidden, .alt = .forbidden, .super = .forbidden },
-            .tag = Msg.char,
-        } }, .none);
-        return;
-    }
-    if (completions.presentation == .dialog) {
-        inputs.push(.{ .key_down = .{ .scope = .global, .capture = true, .key = .up, .tag = Msg.up } }, .none);
-        inputs.push(.{ .key_down = .{ .scope = .global, .capture = true, .key = .down, .tag = Msg.down } }, .none);
-        inputs.push(.{ .key_down = .{ .scope = .global, .capture = true, .key = .left, .tag = Msg.left } }, .none);
-        inputs.push(.{ .key_down = .{ .scope = .global, .capture = true, .key = .right, .tag = Msg.right } }, .none);
-        inputs.push(.{ .key_down = .{ .scope = .global, .capture = true, .key = .tab, .modifiers = .{ .shift = .forbidden, .control = .forbidden, .alt = .forbidden, .super = .forbidden }, .tag = Msg.down } }, .none);
-        inputs.push(.{ .key_down = .{ .scope = .global, .capture = true, .key = .tab, .modifiers = .{ .shift = .required, .control = .forbidden, .alt = .forbidden, .super = .forbidden }, .tag = Msg.up } }, .none);
-        inputs.push(.{ .key_down = .{ .scope = .global, .capture = true, .key = .enter, .tag = Msg.submit } }, .none);
-    }
-    inputs.push(.{ .key_down = .{ .scope = .global, .capture = true, .key = .escape, .tag = Msg.cancel } }, .none);
+    _ = currentCompletions(tables, atoms) orelse return;
+    // Every other key is an action's: the text editor's and the prompt's own, listed by
+    // `pushPromptActions`.
+    // The palette opens over any panel, so it takes the keyboard wherever the focus is.
+    inputs.push(.{ .text_input = .{
+        .scope = .global,
+        .capture = true,
+        .modifiers = .{ .control = .forbidden, .alt = .forbidden, .super = .forbidden },
+        .tag = Msg.char,
+    } }, .none);
 }
 
 /// Under an open prompt, the whole window: a click away from a prompt closes it, and from a
@@ -1319,7 +1378,7 @@ fn subscribeInput(tables: *Table.Registry, atoms: *Atom.Registry, inputs: editor
 //
 // A sequence of keys, as `C-x 4 f`, is the actions system's: `actions_chords` has the keys
 // pressed so far. The line shows them as Emacs's echo area does, and once they have waited
-// `which_key_delay_ms` for the next, the keys they lead to are listed above the line.
+// `which_key_delay_ms` for the next, the keys they lead to are listed below the line.
 
 /// The most the line tells of a sequence: four keys with every modifier, and what follows.
 const kKeyEchoBytes: usize = 128;
@@ -1485,23 +1544,30 @@ fn renderBackdrop(scratch: memory_mod.Scratch, atoms: *Atom.Registry, completion
         defer backdrop.endRect();
         backdrop.onClick(editor_sequencer.to(&backdrop, inputSystem(), if (inline_field) Msg.submit else Msg.cancel, {}), .left);
     }
-    backdrop.commit(.{ .root_size = .{ .x = screen_w, .y = screen_h }, .offset = offset, .hovered = hovered, .depth = depth }, ctx, hits);
+    backdrop.commit(.{ .root_size = .{ .x = screen_w, .y = screen_h }, .offset = offset, .hovered = hovered, .depth = depth }, ctx, hits, editor_sequencer.redrawInbox());
 }
 
 /// The width of a column of key hints: a key and an action's name.
 const kHintColumnWidth: f32 = 450;
-const kHintRowHeight: f32 = 24;
+const kHintRowHeight: f32 = style.metric.row_height;
 const kHintKeyWidth: f32 = 120;
+/// Between a column of hints and the line that divides it from the next.
+const kHintDividerGap: f32 = 12;
+/// A column of hints and the divider and gaps that follow it.
+const kHintColumnStep: f32 = kHintColumnWidth + 2 * kHintDividerGap + 1;
 /// The most rows of hints: the keys past them are not listed.
 const kMaxHintRows: usize = 8;
 
-/// The keys a pending sequence leads to, down each column in turn. `hints` is a line a key:
-/// the key, a tab, what it does.
+/// The keys a pending sequence leads to, down each column in turn, a line dividing each column
+/// from the next. `hints` is a line a key: the key, a tab, what it does.
 fn renderKeyHints(tree: *ui.Tree, hints: []const u8, rows: usize, columns: usize) void {
     var lines = std.mem.splitScalar(u8, hints, '\n');
-    if (!tree.beginRect("editor.action_palette.hints", .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = @as(f32, @floatFromInt(rows)) * kHintRowHeight } }, .clip_content = true })) return;
+    if (!tree.beginRect("editor.action_palette.hints", .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = @as(f32, @floatFromInt(rows)) * kHintRowHeight } }, .gap = kHintDividerGap, .clip_content = true })) return;
     defer tree.endRect();
-    for (0..columns) |column| {
+    const hint_count = std.mem.count(u8, hints, "\n");
+    const filled_columns = @min(columns, (hint_count + rows - 1) / rows);
+    for (0..filled_columns) |column| {
+        if (column > 0) tree.rect(.{ "editor.action_palette.hints.divider", column }, .{ .size = .{ .w = .{ .fixed = 1 }, .h = .fill }, .bg = style.col.divider });
         if (!tree.beginRect(.{ "editor.action_palette.hints.column", column }, .{ .axis = .vertical, .size = .{ .w = .{ .fixed = kHintColumnWidth }, .h = .fill } })) continue;
         defer tree.endRect();
         for (0..rows) |row| {
@@ -1529,29 +1595,119 @@ fn shownMenu(tables: *Table.Registry, presented: ?*const Completions) ?transient
     return transient.shown(tables);
 }
 
-/// The minibuffer's line, and above it what `presented`, the prompt it shows, offers, or a
-/// transient menu shown; with neither the line is the echo area, and above it are the keys a
-/// pending sequence leads to.
+/// The completion grid's columns: what an entry is called, what it does and the keys that do
+/// it (`Completion.label`, `detail`, `shortcut`). Measured across every entry, not those in
+/// sight, so a column keeps its place as the list scrolls and on a row whose cell is empty.
+const GridColumns = struct {
+    label: f32,
+    /// Zero when no entry has a description: the names take its room.
+    detail: f32,
+    /// Zero when no entry has keys.
+    shortcut: f32,
+};
+
+fn gridColumns(ctx: anytype, entries: []const Completion, width: f32) GridColumns {
+    var widest_label: f32 = 0;
+    var widest_shortcut: f32 = 0;
+    var described = false;
+    for (entries) |entry| {
+        const label_width = ctx.measureText(style.ui_font, entry.label).w;
+        widest_label = @max(widest_label, label_width);
+        if (entry.shortcut.len != 0) {
+            const shortcut_width = ctx.measureText(style.ui_font, entry.shortcut).w;
+            widest_shortcut = @max(widest_shortcut, shortcut_width);
+        }
+        if (entry.detail.len != 0) described = true;
+    }
+    // Whole pixels: a cell measured to fit its text must not clip it by a fraction.
+    const shortcut = @min(@ceil(widest_shortcut), width * kMaxShortcutShare);
+    const shortcut_room = if (shortcut > 0) shortcut + kColumnGap else 0;
+    const rest = @max(width - shortcut_room, 0);
+    if (!described) return .{ .label = rest, .detail = 0, .shortcut = shortcut };
+    const label = @min(@ceil(widest_label), rest * kMaxLabelShare);
+    return .{ .label = label, .detail = @max(rest - label - kColumnGap, 0), .shortcut = shortcut };
+}
+
+/// A cell of the grid `width` wide in the row `row`: `text` on one line, clipped at the cell's
+/// edge. Nothing for a column of no width.
+fn gridCell(tree: *ui.Tree, row: ui.ElementId, comptime part: []const u8, text: []const u8, width: f32, color: ui.Color) void {
+    if (width <= 0) return;
+    const cell = ui.partId(tree, row, part);
+    if (!tree.beginRect(cell, .{ .axis = .horizontal, .cross_align = .center, .size = .{ .w = .{ .fixed = width }, .h = .fill }, .clip_content = true })) return;
+    defer tree.endRect();
+    const text_id = ui.partId(tree, row, part ++ ".text");
+    tree.text(text_id, text, .{ .font = style.ui_font, .color = color, .size_hint = .{ .w = .hug, .h = .fill } });
+}
+
+/// The completions from `start`, `shown` of them, as a grid of `columns` below the line; with
+/// a scroll bar beside them while `entries` holds more than are shown.
+fn renderCompletions(tree: *ui.Tree, entries: []const Completion, start: usize, shown: usize, selected: u32, columns: GridColumns, height: f32) void {
+    if (!tree.beginRect("editor.action_palette.list", .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = height } }, .gap = kScrollBarGap, .clip_content = true })) return;
+    defer tree.endRect();
+    if (tree.beginRect("editor.action_palette.rows", .{ .axis = .vertical, .size = .{ .w = .fill, .h = .fill } })) {
+        defer tree.endRect();
+        for (entries[start..][0..shown], 0..) |entry, i| {
+            const index = start + i;
+            const is_selected = index == selected;
+            const salt = std.hash.Wyhash.hash(@intCast(index), entry.label);
+            const id = tree.toElementId(.{ "editor.action_palette.entry", salt });
+            if (!tree.beginRect(id, .{
+                .axis = .horizontal,
+                .cross_align = .center,
+                .size = .{ .w = .fill, .h = .{ .fixed = kRowHeight } },
+                .bg = if (is_selected) style.col.accent_deep else null,
+                .bg_hover = style.col.card_hover,
+                .corner_radius = style.metric.button_radius,
+                .padding = kRowPadding,
+                .padding_y = 0,
+                .gap = kColumnGap,
+                .clip_content = true,
+            })) continue;
+            defer tree.endRect();
+            tree.onClick(editor_sequencer.to(tree, inputSystem(), Msg.invoke, CompletionPayload{ .index = @intCast(index) }), .left);
+            tree.trackHover("");
+            gridCell(tree, id, "label", entry.label, columns.label, style.col.text);
+            gridCell(tree, id, "detail", entry.detail, columns.detail, if (is_selected) style.col.text else style.col.text_dim);
+            gridCell(tree, id, "shortcut", entry.shortcut, columns.shortcut, style.col.accent_bright);
+        }
+    }
+    if (entries.len <= shown) return;
+    // Where the rows in sight sit among them all.
+    const hidden: f32 = @floatFromInt(entries.len - shown);
+    const shown_share = @as(f32, @floatFromInt(shown)) / @as(f32, @floatFromInt(entries.len));
+    const thumb_height = @min(height, @max(kMinThumbHeight, height * shown_share));
+    const thumb_top = (height - thumb_height) * @as(f32, @floatFromInt(start)) / hidden;
+    if (!tree.beginRect("editor.action_palette.scroll_bar", .{ .axis = .vertical, .size = .{ .w = .{ .fixed = kScrollBarWidth }, .h = .fill }, .bg = style.col.inset, .corner_radius = kScrollBarWidth / 2 })) return;
+    defer tree.endRect();
+    tree.rect("editor.action_palette.scroll_bar.above", .{ .size = .{ .w = .fill, .h = .{ .fixed = thumb_top } } });
+    tree.rect("editor.action_palette.scroll_bar.thumb", .{ .size = .{ .w = .fill, .h = .{ .fixed = thumb_height } }, .bg = style.col.text_disabled, .corner_radius = kScrollBarWidth / 2 });
+}
+
+/// The minibuffer: its line, and below it what `presented`, the prompt it shows, offers, or a
+/// transient menu shown; with neither the line is the echo area, and below it are the keys a
+/// pending sequence leads to. It sits along the window's bottom and grows up over the panels,
+/// to `kMaxWindowShare` of the window at most; past that the completions scroll.
 fn renderMinibuffer(scratch: memory_mod.Scratch, tables: *Table.Registry, atoms: *Atom.Registry, presented: ?*const Completions, screen_w: f32, screen_h: f32, offset: math.Vec2f, hovered: ?ui.ElementId, ctx: anytype, hits: *Table, depth: u32) void {
     const s = prompt(tables, atoms);
-    const dialog = if (presented) |completions| completions.presentation == .dialog else false;
-    const entries: []const Completion = if (presented) |completions| completions.entries else &.{};
-    const body: []const u8 = if (presented) |completions| completions.body else "";
+    const palette = paletteTable(tables);
+    const entries: []const Completion = if (presented) |completions| listedEntries(scratch.allocator, Listing.of(palette, s, completions)) else &.{};
+    // A dialog's body is on the line, beside its question (`renderLine`).
+    const body: []const u8 = if (presented) |completions| (if (completions.presentation == .dialog) "" else completions.body) else "";
     const body_height: f32 = if (body.len > 0) kBodyHeight else 0;
 
-    // A prompt lists the completions that fit above the line; a dialog's buttons share a row.
-    var row_capacity: usize = kMaxRows;
-    if (!dialog) {
-        const body_section: f32 = if (body_height > 0) body_height + kSectionGap else 0;
-        const list_room = screen_h * kMaxWindowShare - kMinibufferHeight - 2 * kSectionPadding - body_section;
-        const rows_fitting = @floor(@max(list_room, 0) / kRowHeight);
-        row_capacity = @intFromFloat(@min(rows_fitting, @as(f32, @floatFromInt(kMaxRows))));
-    }
-    const shown_len: usize = @min(entries.len, row_capacity);
+    // The completions that fit below the line.
+    const body_section: f32 = if (body_height > 0) body_height + kSectionGap else 0;
+    // The panels' gap around it, as around a panel.
+    const gap = panels_mod.kGap;
+    const width = screen_w - 2 * gap;
+    const list_room = screen_h * kMaxWindowShare - kMinibufferHeight - 2 * kSectionPadding - body_section;
+    const rows_fitting = @floor(@max(list_room, 0) / kRowHeight);
+    const row_capacity: usize = @min(entries.len, @as(usize, @intFromFloat(rows_fitting)));
+    const shown_len: usize = row_capacity;
     // The palette's run keeps the selection on an entry (`clampSelection`); drawing only reads it.
-    const selected: u32 = if (presented) |completions| shownSelection(s.selected.*, completions) else 0;
-    const start: usize = if (!dialog and row_capacity > 0 and selected >= row_capacity) @as(usize, selected) - (row_capacity - 1) else 0;
-    // A transient menu shown takes the place of what a prompt offers, over the line while no
+    const selected: u32 = if (presented) |completions| shownSelection(s.selected.*, Listing.of(palette, s, completions)) else 0;
+    const start: usize = if (row_capacity > 0 and selected >= row_capacity and selected < entries.len) @as(usize, selected) - (row_capacity - 1) else 0;
+    // A transient menu shown takes the place of what a prompt offers, below the line while no
     // prompt is open or while the prompt reads a value for the menu.
     const menu_shown = shownMenu(tables, presented);
     var menu_height: f32 = 0;
@@ -1564,19 +1720,27 @@ fn renderMinibuffer(scratch: memory_mod.Scratch, tables: *Table.Registry, atoms:
     // columns as which-key does.
     const hints_text: []const u8 = if (presented == null and menu_shown == null) paletteTable(tables).textOf(s.key_hints.*) else "";
     const hint_count = std.mem.count(u8, hints_text, "\n");
-    const hint_columns: usize = @max(1, @as(usize, @intFromFloat(@max(screen_w - 2 * kSectionPadding, 0) / kHintColumnWidth)));
+    // The last column needs no divider after it.
+    const hints_room = width - 2 * kSectionPadding + kHintColumnStep - kHintColumnWidth;
+    const hint_columns: usize = @max(1, @as(usize, @intFromFloat(@max(hints_room, 0) / kHintColumnStep)));
     const hint_rows: usize = @min(kMaxHintRows, (hint_count + hint_columns - 1) / hint_columns);
     const hints_height: f32 = @as(f32, @floatFromInt(hint_rows)) * kHintRowHeight;
 
-    const offered_height: f32 = if (dialog) kRowHeight else @as(f32, @floatFromInt(shown_len)) * kRowHeight;
+    const offered_height: f32 = @as(f32, @floatFromInt(shown_len)) * kRowHeight;
     const parts_gap: f32 = if (body_height > 0 and offered_height > 0) kSectionGap else 0;
     const content_height = body_height + parts_gap + offered_height + hints_height + menu_height;
     const section_height: f32 = if (content_height > 0) content_height + 2 * kSectionPadding else 0;
-    const height = @min(section_height + kMinibufferHeight, screen_h);
-    if (screen_w <= 0 or height <= 0) return;
+    // A rule under the line, inset by the gap, sets what opens below it apart from it.
+    const separator_height: f32 = if (section_height > 0) 1 else 0;
+    const height = @min(kMinibufferHeight + separator_height + section_height, screen_h - 2 * gap);
+    if (width <= 0 or height <= 0) return;
+
+    const scroll_bar_room: f32 = if (entries.len > shown_len) kScrollBarWidth + kScrollBarGap else 0;
+    const grid_width = width - 2 * kSectionPadding - 2 * kRowPadding - scroll_bar_room;
+    const columns: GridColumns = if (shown_len == 0) .{ .label = 0, .detail = 0, .shortcut = 0 } else gridColumns(ctx, entries, grid_width);
 
     const menu_elements: usize = if (menu_shown) |menu| ui.transient.elementCount(menu.menu) else 0;
-    const max_cmds: usize = 64 + (shown_len + 4) * 8 + hint_rows * hint_columns * 8 + menu_elements;
+    const max_cmds: usize = 64 + (shown_len + 4) * 12 + hint_rows * hint_columns * 8 + hint_columns * 2 + menu_elements;
     var tree = ui.Tree.init(scratch, atoms, max_cmds) catch @panic("OOM");
     if (tree.beginRect("editor.action_palette.root", .{
         .axis = .vertical,
@@ -1589,6 +1753,16 @@ fn renderMinibuffer(scratch: memory_mod.Scratch, tables: *Table.Registry, atoms:
         defer tree.endRect();
         tree.onClick(editor_sequencer.to(&tree, inputSystem(), Msg.consume, {}), .left);
         tree.onScroll(editor_sequencer.to(&tree, inputSystem(), scroll_tag, {}));
+        renderLine(&tree, scratch, tables, atoms, s, presented);
+        if (separator_height > 0 and tree.beginRect("editor.action_palette.separator", .{
+            .axis = .horizontal,
+            .size = .{ .w = .fill, .h = .{ .fixed = separator_height } },
+            .padding = gap,
+            .padding_y = 0,
+        })) {
+            defer tree.endRect();
+            tree.rect("editor.action_palette.separator.rule", .{ .size = .{ .w = .fill, .h = .fill }, .bg = style.col.border });
+        }
         if (section_height > 0 and tree.beginRect("editor.action_palette.offered", .{
             .axis = .vertical,
             .size = .{ .w = .fill, .h = .{ .fixed = section_height } },
@@ -1599,113 +1773,91 @@ fn renderMinibuffer(scratch: memory_mod.Scratch, tables: *Table.Registry, atoms:
             defer tree.endRect();
             if (body_height > 0)
                 tree.text("editor.action_palette.body", body, .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .w = .fill, .h = .{ .fixed = body_height } } });
-            if (dialog) {
-                if (tree.beginRect("editor.action_palette.actions", .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = kRowHeight } }, .gap = 8 })) {
-                    defer tree.endRect();
-                    for (entries[0..shown_len], 0..) |entry, i| {
-                        const salt = std.hash.Wyhash.hash(@intCast(i), entry.label);
-                        const id = tree.toElementId(.{ "editor.action_palette.action", salt });
-                        if (tree.beginRect(id, .{
-                            .axis = .horizontal,
-                            .cross_align = .center,
-                            .main_align = .center,
-                            .size = .{ .w = .{ .fixed = kButtonWidth }, .h = .fill },
-                            .bg = if (i == selected) style.col.accent_deep else style.col.button,
-                            .bg_hover = if (i == selected) style.col.accent_deep else style.col.button_hover,
-                            .padding = 4,
-                            .corner_radius = style.metric.button_radius,
-                            .clip_content = true,
-                        })) {
-                            defer tree.endRect();
-                            tree.onClick(editor_sequencer.to(&tree, inputSystem(), Msg.invoke, CompletionPayload{ .index = @intCast(i) }), .left);
-                            tree.trackHover("");
-                            tree.text(.{ "editor.action_palette.action.text", salt }, entry.label, .{ .font = style.ui_font, .color = style.col.text });
-                        }
-                    }
-                }
-            } else if (menu_shown) |menu| {
+            if (menu_shown) |menu| {
                 ui.transient.record(&tree, menu.menu, menu.state, transient.menu_style);
             } else if (hint_rows > 0) {
                 renderKeyHints(&tree, hints_text, hint_rows, hint_columns);
-            } else if (shown_len > 0 and tree.beginRect("editor.action_palette.list", .{ .size = .{ .w = .fill, .h = .{ .fixed = offered_height } }, .clip_content = true })) {
-                defer tree.endRect();
-                for (entries[start..][0..shown_len], 0..) |entry, i| {
-                    const index = start + i;
-                    const is_selected = index == selected;
-                    const salt = std.hash.Wyhash.hash(@intCast(index), entry.label);
-                    const id = tree.toElementId(.{ "editor.action_palette.entry", salt });
-                    if (tree.beginRect(id, .{ .axis = .horizontal, .size = .{ .w = .fill, .h = .{ .fixed = kRowHeight } }, .bg = if (is_selected) style.col.accent_deep else null, .bg_hover = style.col.card_hover, .corner_radius = 4, .padding = 8, .gap = 8, .clip_content = true })) {
-                        defer tree.endRect();
-                        tree.onClick(editor_sequencer.to(&tree, inputSystem(), Msg.invoke, CompletionPayload{ .index = @intCast(index) }), .left);
-                        tree.trackHover("");
-                        tree.text(.{ "editor.action_palette.entry.label", salt }, entry.label, .{ .font = style.ui_font, .color = style.col.text, .size_hint = .{ .w = .fill, .h = .fill } });
-                        if (entry.detail.len > 0)
-                            tree.text(.{ "editor.action_palette.entry.detail", salt }, entry.detail, .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .w = .{ .fixed = kDetailColWidth }, .h = .fill } });
-                        if (entry.key.len > 0)
-                            tree.text(.{ "editor.action_palette.entry.key", salt }, entry.key, .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .w = .{ .fixed = kKeyColWidth }, .h = .fill } });
-                    }
-                }
-            }
-        }
-        // The line is flat, as Emacs's is: the caret says where typing goes.
-        const line_frame: ui.RectParams = .{
-            .axis = .horizontal,
-            .cross_align = .center,
-            .size = .{ .w = .fill, .h = .{ .fixed = kMinibufferHeight } },
-            .padding = 8,
-            .gap = 4,
-            .clip_content = true,
-        };
-        if (tree.beginRect("editor.action_palette.line", line_frame)) {
-            defer tree.endRect();
-            if (presented) |completions| {
-                if (dialog) {
-                    tree.text("editor.action_palette.line.title", if (completions.title.len > 0) completions.title else " ", .{ .font = style.ui_font, .color = style.col.text, .size_hint = .{ .w = .fill, .h = .fill } });
-                } else {
-                    if (completions.prompt.len > 0)
-                        tree.text("editor.action_palette.line.label", completions.prompt, .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .h = .fill } });
-                    const empty = s.text.payload.len == 0;
-                    const placeholder = empty and completions.title.len > 0;
-                    if (editorDrawable(tables, atoms)) |editor| {
-                        // The request's text editor draws the text, caret and selection.
-                        const drawable = scratch.allocator.create(shared.FieldDrawable) catch @panic("OOM");
-                        drawable.* = editor;
-                        tree.custom("editor.action_palette.line.editor", drawable, .{ .size = .{ .w = .fill, .h = .fill } });
-                    } else if (s.text_selected.* != 0) {
-                        if (tree.beginRect("editor.action_palette.line.selection", .{ .axis = .horizontal, .cross_align = .center, .bg = style.col.accent_deep })) {
-                            defer tree.endRect();
-                            tree.text("editor.action_palette.line.text", textOf(paletteTable(tables), s), .{ .font = style.ui_font, .color = style.col.text });
-                        }
-                    } else {
-                        tree.text("editor.action_palette.line.text", if (!empty) textOf(paletteTable(tables), s) else if (placeholder) completions.title else " ", .{
-                            .font = style.ui_font,
-                            .color = if (placeholder) style.col.text_dim else style.col.text,
-                            .size_hint = .{ .w = .fill, .h = .fill },
-                        });
-                        tree.cursor("editor.action_palette.line.cursor", if (placeholder) 0 else s.cursor.*, .{ .bg = style.col.accent_bright });
-                    }
-                }
-            } else if (s.key_echo.payload.len != 0 or s.key_note.payload.len != 0) {
-                // A count's note and the sequence that follows it read as one line of keys.
-                const palette = paletteTable(tables);
-                const key_note = palette.textOf(s.key_note.*);
-                const key_echo = palette.textOf(s.key_echo.*);
-                const separator: []const u8 = if (key_note.len != 0 and key_echo.len != 0) " " else "";
-                const keys = std.fmt.allocPrint(scratch.allocator, "{s}{s}{s}", .{ key_note, separator, key_echo }) catch key_echo;
-                tree.text("editor.action_palette.line.keys", keys, .{ .font = style.ui_font, .color = style.col.text, .size_hint = .{ .w = .fill, .h = .fill } });
-            } else if (s.echo.payload.len != 0) {
-                const echo = paletteTable(tables).textOf(s.echo.*);
-                tree.text("editor.action_palette.line.echo", echo, .{ .font = style.ui_font, .color = style.col.text, .size_hint = .{ .w = .fill, .h = .fill } });
+            } else if (shown_len > 0) {
+                renderCompletions(&tree, entries, start, shown_len, selected, columns, offered_height);
             }
         }
     }
-    tree.commit(.{ .root_size = .{ .x = screen_w, .y = height }, .origin = .{ .x = 0, .y = screen_h - height }, .offset = offset, .hovered = hovered, .depth = depth + 1 }, ctx, hits);
+    const origin_y = screen_h - gap - height;
+    tree.commit(.{ .root_size = .{ .x = width, .y = height }, .origin = .{ .x = gap, .y = origin_y }, .offset = offset, .hovered = hovered, .depth = depth + 1 }, ctx, hits, editor_sequencer.redrawInbox());
+    // A prompt here has the keyboard: the minibuffer wears the focus border, glowing, as the
+    // panel it took the keyboard from keeps its own unlit (`panels.keyboardOutsidePanels`).
+    if (presented != null) ui.panel_header.drawFocusBorder(ctx, .{ .x = gap, .y = origin_y, .w = width, .h = height }, .glowing);
+}
+
+/// The minibuffer's line: a prompt's label, or a dialog's question and body, and the text
+/// typed; the keys of a sequence being typed; or the last thing the person was told. Flat, as
+/// Emacs's is: the caret says where typing goes.
+fn renderLine(tree: *ui.Tree, scratch: memory_mod.Scratch, tables: *Table.Registry, atoms: *Atom.Registry, s: State, presented: ?*const Completions) void {
+    const line_frame: ui.RectParams = .{
+        .axis = .horizontal,
+        .cross_align = .center,
+        .size = .{ .w = .fill, .h = .{ .fixed = kMinibufferHeight } },
+        .padding = kRowPadding,
+        .padding_y = 0,
+        .gap = 4,
+        .clip_content = true,
+    };
+    if (!tree.beginRect("editor.action_palette.line", line_frame)) return;
+    defer tree.endRect();
+    if (presented) |completions| {
+        // A dialog's title is its question and its body what the question is about, both
+        // staying on the line as the answer is typed after them.
+        const dialog = completions.presentation == .dialog;
+        if (dialog and completions.title.len > 0)
+            tree.text("editor.action_palette.line.title", completions.title, .{ .font = style.ui_font, .color = style.col.text });
+        if (dialog and completions.body.len > 0) {
+            tree.text("editor.action_palette.line.body", completions.body, .{ .font = style.ui_font, .color = style.col.text_dim });
+            // A rule after the body, so the answer typed reads apart from it.
+            if (tree.beginRect("editor.action_palette.line.separator", .{ .axis = .horizontal, .cross_align = .center, .size = .{ .h = .fill }, .padding = kLineSeparatorGap, .padding_y = 0 })) {
+                defer tree.endRect();
+                tree.rect("editor.action_palette.line.separator.rule", .{ .size = .{ .w = .{ .fixed = 1 }, .h = .{ .fixed = kLineSeparatorHeight } }, .bg = style.col.text_disabled });
+            }
+        }
+        if (completions.prompt.len > 0)
+            tree.text("editor.action_palette.line.label", completions.prompt, .{ .font = style.ui_font, .color = style.col.text_dim });
+        const empty = s.text.payload.len == 0;
+        const placeholder = !dialog and empty and completions.title.len > 0;
+        if (editorDrawable(tables, atoms)) |editor| {
+            // The request's text editor draws the text, caret and selection.
+            const drawable = scratch.allocator.create(shared.FieldDrawable) catch @panic("OOM");
+            drawable.* = editor;
+            tree.custom("editor.action_palette.line.editor", drawable, .{ .size = .{ .w = .fill, .h = .fill } });
+        } else if (s.text_selected.* != 0) {
+            if (tree.beginRect("editor.action_palette.line.selection", .{ .axis = .horizontal, .cross_align = .center, .bg = style.col.accent_deep })) {
+                defer tree.endRect();
+                tree.text("editor.action_palette.line.text", textOf(paletteTable(tables), s), .{ .font = style.ui_font, .color = style.col.text });
+            }
+        } else {
+            tree.text("editor.action_palette.line.text", if (!empty) textOf(paletteTable(tables), s) else if (placeholder) completions.title else " ", .{
+                .font = style.ui_font,
+                .color = if (placeholder) style.col.text_dim else style.col.text,
+                .size_hint = .{ .w = .fill, .h = .fill },
+            });
+            tree.cursor("editor.action_palette.line.cursor", if (placeholder) 0 else s.cursor.*, .{ .bg = style.col.accent_bright });
+        }
+    } else if (s.key_echo.payload.len != 0 or s.key_note.payload.len != 0) {
+        // A count's note and the sequence that follows it read as one line of keys.
+        const palette = paletteTable(tables);
+        const key_note = palette.textOf(s.key_note.*);
+        const key_echo = palette.textOf(s.key_echo.*);
+        const separator: []const u8 = if (key_note.len != 0 and key_echo.len != 0) " " else "";
+        const keys = std.fmt.allocPrint(scratch.allocator, "{s}{s}{s}", .{ key_note, separator, key_echo }) catch key_echo;
+        tree.text("editor.action_palette.line.keys", keys, .{ .font = style.ui_font, .color = style.col.text, .size_hint = .{ .w = .fill, .h = .fill } });
+    } else if (s.echo.payload.len != 0) {
+        const echo = paletteTable(tables).textOf(s.echo.*);
+        tree.text("editor.action_palette.line.echo", echo, .{ .font = style.ui_font, .color = style.col.text, .size_hint = .{ .w = .fill, .h = .fill } });
+    }
 }
 
 /// Drawn in the action palette's own layer, over the whole window: `screen_w` and `screen_h` are
-/// the window's, and `offset` places hit regions in it. The minibuffer's line draws wherever
-/// the panels left it room, and over a stage alone only while a prompt or a transient menu is
-/// open.
+/// the window's, and `offset` places hit regions in it. The minibuffer draws wherever the panels
+/// left it room, and with none, over a maximized panel or a stage alone, only while a prompt or
+/// a transient menu is open or the line tells something.
 pub fn render(scratch: memory_mod.Scratch, tables: *Table.Registry, atoms: *Atom.Registry, screen_w: f32, screen_h: f32, offset: math.Vec2f, hovered: ?ui.ElementId, ctx: anytype, hits: *Table, depth: u32) void {
     const open = currentCompletions(tables, atoms);
     if (open) |completions| renderBackdrop(scratch, atoms, completions, screen_w, screen_h, offset, hovered, ctx, hits, depth);
@@ -1714,9 +1866,11 @@ pub fn render(scratch: memory_mod.Scratch, tables: *Table.Registry, atoms: *Atom
     if (open) |completions| {
         if (completions.presentation == .inline_field) presented = null;
     }
-    const line_has_room = prompt(tables, atoms).reserved.* > 0;
+    const s = prompt(tables, atoms);
+    const line_has_room = s.reserved.* > 0;
     const menu_shown = transient.shown(tables) != null;
-    if (presented == null and !line_has_room and !menu_shown) return;
+    const telling = s.echo.payload.len != 0 or s.key_echo.payload.len != 0 or s.key_note.payload.len != 0;
+    if (presented == null and !line_has_room and !menu_shown and !telling) return;
     renderMinibuffer(scratch, tables, atoms, presented, screen_w, screen_h, offset, hovered, ctx, hits, depth);
 }
 

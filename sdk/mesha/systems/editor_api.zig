@@ -10,8 +10,7 @@
 //!
 //! Tab completes the text to the selected entry, as vertico's `vertico-insert` does: the text
 //! becomes the entry's `completes_to`, or its `label` when it has none, unless the request's
-//! `tab` says Tab leaves the text. It never moves the selection; in a dialog, which takes no
-//! text, Tab selects the next button.
+//! `tab` says Tab leaves the text. It never moves the selection.
 //!
 //! `CmdPayload` is what the editor plugin's `commands.app` rows carry for the palette
 //! (`plugin.app_commands`).
@@ -31,10 +30,14 @@ pub const Completion = struct {
     /// The owner's own text for the entry, such as a path. The palette does not show it; it comes
     /// back with the choice.
     key: []const u8 = "",
-    /// What the list shows for the entry.
+    /// What the entry is called: the list's first column, as an action's `mode.name`.
     label: []const u8,
-    /// More of the owner's text about the entry, which comes back with the choice.
+    /// What the entry is or does, in words: the list's second column. It comes back with the
+    /// choice.
     detail: []const u8 = "",
+    /// The keys that do what the entry does, as `C-x RET f` writes them: the list's last column,
+    /// empty for an entry no keys reach. It does not come back with the choice.
+    shortcut: []const u8 = "",
     /// The owner's own bytes for the entry, which come back with the choice.
     data: [kCompletionDataSize]u8 = [_]u8{0} ** kCompletionDataSize,
     /// The text Tab makes the prompt's while this entry is selected; null means `label`. Set
@@ -50,18 +53,16 @@ pub const Completion = struct {
 pub const Completions = struct {
     /// How the palette shows a request.
     pub const Presentation = enum(u8) {
-        /// Text typed in the minibuffer's line, its completions listed above it.
+        /// Text typed in the minibuffer's line, its completions listed below it in columns: each
+        /// entry's label, detail and shortcut.
         prompt,
-        /// A question in the minibuffer's line, its answers a row of buttons above it.
+        /// A question in the minibuffer's line, its answers listed below it as a prompt's
+        /// completions are. The palette narrows them itself to those whose label holds the text
+        /// typed, ignoring case, so the owner hears only the answer, never `query_changed`.
         dialog,
         /// Takes text like a prompt, but the requester's own panel draws the text and caret.
         /// A click anywhere else commits, as leaving a field does in Figma.
         inline_field,
-
-        /// Whether typing edits the request's text: every presentation but `dialog`.
-        pub fn takesText(self: Presentation) bool {
-            return self != .dialog;
-        }
     };
 
     /// What typing does to `initial_query` when the request opens: replaces it, selected, or
@@ -90,13 +91,15 @@ pub const Completions = struct {
     initial_query: []const u8 = "",
     /// What typing does to `initial_query`.
     initial_query_edit: InitialQueryEdit = .replace,
-    /// What Tab does to the text. A dialog's Tab selects its next button whatever this says.
+    /// What Tab does to the text.
     tab: Tab = .selected,
     /// The request's title, shown on the minibuffer's line.
     title: []const u8 = "",
-    /// More for the person to read, shown with the request.
+    /// More for the person to read: a line above a prompt's completions, or beside a dialog's
+    /// question, as the file a `Save changes?` is about.
     body: []const u8 = "",
-    /// A dialog's entry selected as it opens; null selects none.
+    /// A dialog's entry selected as it opens; null selects none, so Enter takes nothing until an
+    /// answer is typed or moved to. Typing selects the first answer the text holds.
     default_entry: ?u32 = null,
     /// With no entries, a submit ends the prompt with the text typed and a completion that
     /// holds nothing, so its owner can tell it from a cancel; without this it does nothing.
@@ -148,14 +151,6 @@ pub const Msg = struct {
 
     /// The tag a character typed at the prompt arrives under.
     pub const char = Atom.from("action_palette_char");
-    /// The tag of the left arrow at the prompt.
-    pub const left = Atom.from("action_palette_left");
-    /// The tag of the right arrow at the prompt.
-    pub const right = Atom.from("action_palette_right");
-    /// The tag of the up arrow, and of Shift with Tab, at the prompt.
-    pub const up = Atom.from("action_palette_up");
-    /// The tag of the down arrow, and of Tab, at the prompt.
-    pub const down = Atom.from("action_palette_down");
     /// The tag of Enter at the prompt, and of a click outside an inline field.
     pub const submit = Atom.from("action_palette_submit");
     /// The tag of Escape at the prompt, and of a click outside a prompt or a dialog.

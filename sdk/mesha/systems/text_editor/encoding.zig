@@ -137,7 +137,8 @@ pub fn countLineEndings(sample: []const u8) LineEndingCounts {
 }
 
 /// The encodings iconv names, one name each, the commonest first: glibc's converters and GNU
-/// libiconv's. Which of them convert depends on the platform's iconv, and it may convert
+/// libiconv's. Which of them convert depends on the platform (its iconv, or on Windows its code
+/// pages), and it may convert
 /// others, and these under other names: the host tells which (`supported_encodings`).
 pub const known_names = [_][]const u8{
     "UTF-8",            "UTF-16LE",          "UTF-16BE",          "UTF-32LE",         "UTF-32BE",      "UTF-16",           "UTF-32",            "UTF-7",            "UCS-2LE",

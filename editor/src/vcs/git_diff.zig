@@ -56,9 +56,10 @@ const modes = @import("../modes.zig");
 const open = @import("../open.zig");
 const panel_frame = @import("../panel_frame.zig");
 const text_panel = @import("../text_panel.zig");
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const editor_state = @import("../state.zig");
 const style = @import("../ui/style.zig");
+const editor_sequencer = @import("../editor_sequencer.zig");
 
 // ---- the panel -----------------------------------------------------------------------------
 
@@ -67,9 +68,9 @@ pub const panel_name = "vcs_git_diff";
 /// The panel's id, as an atom.
 pub const panel = Atom.from(panel_name);
 
-/// The panel, a fixed panel the workspaces system declares while it is shown: at the left of
+/// The panel, a fixed panel `fixed_panels` declares while it is shown: at the left of
 /// the status panel, half of the space they share, taking the focus. Its title is set to what it
-/// shows (`workspaces.setPanelTitle`).
+/// shows (`fixed_panels.setPanelTitle`).
 pub const fixed_panel: plugin.panels.Open = .{
     .id = panel,
     .title = "vcs-git diff",
@@ -276,7 +277,7 @@ fn sideOf(byte: u8) git.Side {
 const panel_table = Atom.from(panel_table_name);
 const folds_table = Atom.from(folds_table_name);
 const panel_state_table = Atom.from(panels_mod.state_table_name);
-const shown_panels_table = Atom.from(workspaces.shown_panels_table_name);
+const shown_panels_table = Atom.from(fixed_panels.shown_panels_table_name);
 const font_metrics_table = Atom.from(resources.font_metrics_table_name);
 
 /// Makes the panel's tables unless they are there: changes no row of one that is.
@@ -342,8 +343,8 @@ pub fn show(work: status.Work, shown: Shown) !void {
     }
     try keep(work, shown, changed);
     const frame = work.pass.frame;
-    const placement: workspaces.Placement = if (statusOpen(work.pass)) .arranged else .beside_focused;
-    workspaces.showPanel(frame.tables, frame.atoms, panel, placement, .take);
+    const placement: fixed_panels.Placement = if (statusOpen(work.pass)) .arranged else .beside_focused;
+    fixed_panels.showPanel(frame.tables, frame.atoms, panel, placement, .take);
     try retitle(work);
 }
 
@@ -368,7 +369,7 @@ pub fn follow(work: status.Work, shown: Shown) !void {
 /// Whether the panel is shown: declared, open or about to open.
 pub fn isOpen(pass: *const sequencer.Pass) bool {
     if (!pass.declares(shown_panels_table)) return false;
-    return workspaces.panelShown(pass.frame.tables, panel);
+    return fixed_panels.panelShown(pass.frame.tables, panel);
 }
 
 /// Whether the status panel is open in the panels' tree, which the panel opens beside.
@@ -476,7 +477,7 @@ fn retitle(work: status.Work) !void {
             break :blk try std.fmt.allocPrint(allocator, "{s} {s}", .{ short, subject });
         },
     };
-    workspaces.setPanelTitle(work.pass.frame.tables, panel, title);
+    fixed_panels.setPanelTitle(work.pass.frame.tables, panel, title);
 }
 
 /// Shows nothing, titled as `fixed_panel` is: the project changed, and what the panel showed is
@@ -488,7 +489,7 @@ pub fn forget(work: status.Work) !void {
     row.show_failed.* = 0;
     try cells.assignString(row.path, "");
     try startOver(work);
-    workspaces.setPanelTitle(work.pass.frame.tables, panel, "");
+    fixed_panels.setPanelTitle(work.pass.frame.tables, panel, "");
 }
 
 // ---- what the status's work tells the panel ------------------------------------------------
@@ -653,7 +654,7 @@ pub fn take(work: status.Work, received: sequencer.Message) !void {
 /// `q` and `C-x 0`: the panel closes, and the focus goes where closing a panel sends it, the
 /// panel that had it before: nothing is asked for by name.
 fn close(work: status.Work) void {
-    workspaces.hidePanel(work.pass.frame.tables, panel);
+    fixed_panels.hidePanel(work.pass.frame.tables, panel);
 }
 
 /// `g`: a file's diff asked again, through a refresh of the status, whose end asks for the
@@ -1425,5 +1426,5 @@ pub fn render(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *Atom.
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .hovered = editor_state.hoveredElementId(tables),
         .depth = panels_mod.kPanelHitDepth,
-    }, ctx, editor_state.hitRegions(tables, atoms));
+    }, ctx, editor_state.hitRegions(tables, atoms), editor_sequencer.redrawInbox());
 }

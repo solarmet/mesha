@@ -4,44 +4,6 @@ const mesha = @import("mesha");
 const ui = mesha.ui;
 const mesha_runtime = @import("mesha_runtime");
 const figure_runtime = mesha_runtime.figure;
-test {
-    _ = @import("figure/tests.zig");
-    _ = @import("ui/button.zig");
-    _ = @import("ui/vsync.zig");
-    _ = @import("modes.zig");
-    _ = @import("open.zig");
-    _ = @import("text_tools.zig");
-    _ = @import("vcs/runner_test.zig");
-    _ = @import("vcs/git.zig");
-    _ = @import("vcs/git_status_test.zig");
-    _ = @import("vcs/git_commit_test.zig");
-    _ = @import("vcs/git_log_test.zig");
-    _ = @import("vcs/git_branch_test.zig");
-    _ = @import("vcs/git_rebase_test.zig");
-    _ = @import("vcs/git_diff_test.zig");
-    _ = @import("vcs/p4_test.zig");
-    _ = @import("vcs/query.zig");
-    _ = @import("vcs/p4_status_test.zig");
-    _ = @import("document/org.zig");
-    _ = @import("document/sources.zig");
-    _ = @import("document/document.zig");
-    _ = @import("document/view.zig");
-    _ = @import("document/document_test.zig");
-    _ = @import("plugins.zig");
-    _ = @import("figure/sequencer.zig");
-    _ = @import("figure_ux_test.zig");
-    _ = @import("figure_table_rpc_test.zig");
-    _ = editor_sequencer;
-}
-const plugin = mesha.plugin;
-const input_mod = mesha.input;
-const os_mod = mesha.os;
-const time_mod = mesha.time;
-const sequencer_mod = mesha.sequencer;
-const Atom = mesha.Atom;
-const memory_mod = mesha.memory;
-const Table = mesha.Table;
-
 const lib = @import("editor.zig");
 const windows = @import("windows.zig");
 const panel_frame = @import("panel_frame.zig");
@@ -53,7 +15,92 @@ const text_panel = @import("text_panel.zig");
 const figure_workspace = @import("figure/workspace.zig");
 const table_view = @import("table_view.zig");
 const transport_fixture = @import("figure/transport_fixture.zig");
-const workspaces = @import("workspaces.zig");
+const fixed_panels = @import("fixed_panels.zig");
+const buffer_list = @import("buffer_list.zig");
+const editor_sequencer = @import("editor_sequencer.zig");
+const transient = @import("transient.zig");
+const tests = @import("figure/tests.zig");
+const button = @import("ui/button.zig");
+const vsync = @import("ui/vsync.zig");
+const modes = @import("modes.zig");
+const open = @import("open.zig");
+const text_tools = @import("text_tools.zig");
+const runner_test = @import("vcs/runner_test.zig");
+const git = @import("vcs/git.zig");
+const git_status_test = @import("vcs/git_status_test.zig");
+const git_commit_test = @import("vcs/git_commit_test.zig");
+const git_log_test = @import("vcs/git_log_test.zig");
+const git_branch_test = @import("vcs/git_branch_test.zig");
+const git_rebase_test = @import("vcs/git_rebase_test.zig");
+const git_diff_test = @import("vcs/git_diff_test.zig");
+const p4_test = @import("vcs/p4_test.zig");
+const query_mod = @import("vcs/query.zig");
+const p4_status_test = @import("vcs/p4_status_test.zig");
+const org = @import("document/org.zig");
+const sources = @import("document/sources.zig");
+const document = @import("document/document.zig");
+const view_mod = @import("document/view.zig");
+const document_test = @import("document/document_test.zig");
+const plugins_mod = @import("plugins.zig");
+const sequencer = @import("figure/sequencer.zig");
+const figure_ux_test = @import("figure_ux_test.zig");
+const figure_table_rpc_test = @import("figure_table_rpc_test.zig");
+const table_authoring = @import("table_authoring.zig");
+const git_status = @import("vcs/git_status.zig");
+const git_commit = @import("vcs/git_commit.zig");
+const session = @import("figure/session.zig");
+const stage = @import("stage.zig");
+const git_log = @import("vcs/git_log.zig");
+const git_rebase = @import("vcs/git_rebase.zig");
+const style = @import("ui/style.zig");
+const figure_view = @import("figure/view.zig");
+const prompts = @import("figure/prompts.zig");
+const names_mod = @import("figure/names.zig");
+const drawing = @import("figure/drawing.zig");
+const selection = @import("figure/selection.zig");
+const commands_mod = @import("figure/commands.zig");
+const weight = @import("figure/weight.zig");
+const inspector = @import("inspector.zig");
+test {
+    _ = tests;
+    _ = fixed_panels;
+    _ = buffer_list;
+    _ = button;
+    _ = vsync;
+    _ = modes;
+    _ = open;
+    _ = text_tools;
+    _ = runner_test;
+    _ = git;
+    _ = git_status_test;
+    _ = git_commit_test;
+    _ = git_log_test;
+    _ = git_branch_test;
+    _ = git_rebase_test;
+    _ = git_diff_test;
+    _ = p4_test;
+    _ = query_mod;
+    _ = p4_status_test;
+    _ = org;
+    _ = sources;
+    _ = document;
+    _ = view_mod;
+    _ = document_test;
+    _ = plugins_mod;
+    _ = sequencer;
+    _ = figure_ux_test;
+    _ = figure_table_rpc_test;
+    _ = editor_sequencer;
+}
+const plugin = mesha.plugin;
+const input_mod = mesha.input;
+const os_mod = mesha.os;
+const time_mod = mesha.time;
+const sequencer_mod = mesha.sequencer;
+const Atom = mesha.Atom;
+const memory_mod = mesha.memory;
+const Table = mesha.Table;
+
 const panels_mod = mesha.panels;
 
 const kScreenW: f32 = 1920;
@@ -251,7 +298,7 @@ fn runSystem(fx: *Fixture, system: sequencer_mod.System) !void {
 /// Table authoring applies the changes to tables' shapes asked for, as at the start of the
 /// editor's run, and the windows take what they came to, as the next update does.
 fn applyAuthoring(fx: *Fixture) !void {
-    try runSystem(fx, @import("table_authoring.zig").system());
+    try runSystem(fx, table_authoring.system());
     try runSystem(fx, windows.system());
 }
 
@@ -275,7 +322,6 @@ fn systemMessage(fx: *Fixture, system: sequencer_mod.System, received: sequencer
 /// take its tag, else the editor's own handling, which must take it.
 fn editorMessage(fx: *Fixture, received: sequencer_mod.Message) !void {
     if (windows.system().claims(received.tag)) return windowsMessage(fx, received);
-    const open = @import("open.zig");
     if (open.system().claims(received.tag)) return systemMessage(fx, open.system(), received);
     try std.testing.expect(lib.updateMessage(&fx.mem, &fx.tables, &fx.atoms, received));
 }
@@ -357,33 +403,7 @@ fn submitPromptText(fx: *Fixture, name: []const u8) !void {
     try runPalette(fx);
 }
 
-test "show_world alias dispatches workspace activation" {
-    var fx: Fixture = .{};
-    try fx.init(std.testing.allocator);
-    defer fx.deinit();
-    try lib.init(&fx.mem, &fx.atoms, &fx.tables);
-    fx.resetCommands();
-
-    workspaces.arrangeNow(&fx.tables, &fx.atoms, .figure);
-    try systemAction(&fx, workspaces.system(), fx.atoms.intern("show_world"));
-    // The workspace activates: every panel closes, and the app's arrangement, which has none
-    // of the editor's panels, shows none. No other plugin's panel is hidden, so none is shown.
-    try std.testing.expectEqual(@as(usize, 1), panelRequestCount(&fx.tables));
-    const activation = panelRequestAt(&fx.tables, 0).?;
-    try std.testing.expect(activation == .close_all);
-    try std.testing.expectEqual(workspaces.Workspace.app, workspaces.activeWorkspace(&fx.tables, &fx.atoms));
-    try std.testing.expect(!workspaces.panelShown(&fx.tables, fx.atoms.intern("figure_stage")));
-
-    // Asked again in the app workspace, it arranges nothing. The app's window is empty here,
-    // with no other plugin's panel to show, so the workspace gives way to the text workspace.
-    fx.resetCommands();
-    workspaces.arrangeNow(&fx.tables, &fx.atoms, .app);
-    try systemAction(&fx, workspaces.system(), fx.atoms.intern("show_world"));
-    try std.testing.expectEqual(@as(usize, 1), panelRequestCount(&fx.tables));
-    try std.testing.expectEqual(workspaces.Workspace.text, workspaces.activeWorkspace(&fx.tables, &fx.atoms));
-}
-
-test "with no panel open and the text workspace active, a text panel opens on *scratch*" {
+test "with no panel open nothing opens, and a buffer shown makes its window, which takes the focus" {
     var fx: Fixture = .{};
     try fx.init(std.testing.allocator);
     defer fx.deinit();
@@ -395,65 +415,47 @@ test "with no panel open and the text workspace active, a text panel opens on *s
     fx.text_editors.publish(&fx.tables);
     fx.resetCommands();
 
-    // Another workspace with nothing open is its own to arrange.
-    activateEmpty(&fx, .app);
+    // The window is left empty.
     try runSystem(&fx, text_panel.system());
     try std.testing.expectEqual(@as(usize, 0), textPanelsOpened(&fx).count);
 
-    // The text workspace's arrangement is a window on *scratch*, which the system declares.
-    activateEmpty(&fx, .text);
+    // A buffer shown with no panel to show it in makes one.
+    text_panel.showBuffer(&fx.tables, scratch, .this_window);
     try runSystem(&fx, text_panel.system());
     const opened = textPanelsOpened(&fx);
     try std.testing.expectEqual(@as(usize, 1), opened.count);
-    const windows_table = fx.tables.findByName(Atom.from(text_panel.table_name)).?;
-    var shown = windows_table.readQuery(struct { panel: *Atom, buffer: *Atom });
-    const window = shown.next().?.view;
-    try std.testing.expectEqual(opened.last, window.panel.*);
-    try std.testing.expectEqual(scratch, window.buffer.*);
-
-    // It opens with the frame, and takes the focus.
+    try std.testing.expectEqual(scratch, textWindow(&fx, opened.last).?.buffer.*);
     applyPanelRequests(&fx);
     try std.testing.expect(panels_mod.hasFocus(&fx.tables, &fx.atoms, opened.last));
-
-    // Once a panel is open, nothing more opens.
-    try runSystem(&fx, text_panel.system());
-    try std.testing.expectEqual(@as(usize, 0), textPanelsOpened(&fx).count);
 }
 
-/// A fixture with the editor and a `*scratch*` buffer, the text workspace active and its
-/// window open and shown, as at a start: returns that window's panel.
-fn startInTextWorkspace(fx: *Fixture) !Atom {
+/// A fixture with the editor and a `*scratch*` buffer, and a window on it open and shown, as
+/// at a start: returns that window's panel.
+fn startWithScratchWindow(fx: *Fixture) !Atom {
     try fx.init(std.testing.allocator);
     errdefer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
-    return openTextWorkspace(fx);
+    return openScratchWindow(fx);
 }
 
-/// With the editor started, a `*scratch*` buffer and the text workspace's window on it, open
-/// and shown: returns that window's panel.
-fn openTextWorkspace(fx: *Fixture) !Atom {
+/// With the editor started, a `*scratch*` buffer and a window on it, open and shown: returns
+/// that window's panel.
+fn openScratchWindow(fx: *Fixture) !Atom {
     // A text panel's run subscribes to the pointer.
     try input_mod.ensureTables(try fx.mem.tableScratchAllocator(), &fx.atoms, &fx.tables);
     const scratch = plugin.text_editor_api.scratch_buffer;
     fx.text_editors.apply(&fx.tables, .{ .create = .{ .buffer = scratch, .lines = .multi, .name = plugin.text_editor_api.scratch_name } });
     fx.text_editors.publish(&fx.tables);
     fx.resetCommands();
+    text_panel.showBuffer(&fx.tables, scratch, .this_window);
     try runSystem(fx, text_panel.system());
     const opened = textPanelsOpened(fx);
     try std.testing.expectEqual(@as(usize, 1), opened.count);
     applyPanelRequests(fx);
-    // Shown once, the window is one a change of workspace closes rather than one never shown.
+    // Shown once, the window is one whose panel closing takes its row.
     try runSystem(fx, text_panel.system());
     applyPanelRequests(fx);
     return opened.last;
-}
-
-/// Makes `workspace` the active one with no panel open, as after its last panel closed.
-fn activateEmpty(fx: *Fixture, workspace: workspaces.Workspace) void {
-    workspaces.arrangeNow(&fx.tables, &fx.atoms, workspace);
-    var shown: [panels_mod.kMaxPanels]panels_mod.Panel = undefined;
-    for (panels_mod.panels(&fx.tables, &fx.atoms, &shown)) |panel| workspaces.hidePanel(&fx.tables, panel.id);
-    panels_mod.applyCmd(&fx.tables, &fx.atoms, .close_all);
 }
 
 /// Opens and closes panels as the systems declare them, then applies the panels' requests
@@ -479,7 +481,7 @@ fn textPanelsOpened(fx: *Fixture) struct { count: usize, last: Atom } {
 
 test "a text panel takes its cell from its font's metrics, and a zoom keeps its first line with no drawing" {
     var fx: Fixture = .{};
-    const panel = try startInTextWorkspace(&fx);
+    const panel = try startWithScratchWindow(&fx);
     defer fx.deinit();
     // No font is loaded yet: nothing to scroll by.
     try std.testing.expectEqual(@as(f32, 0), textCell(&fx, panel).line_height.*);
@@ -493,7 +495,7 @@ test "a text panel takes its cell from its font's metrics, and a zoom keeps its 
     for ([_]struct { font: text_panel.TextSize, advance: f32 }{ .{ .font = opened_font, .advance = 14 }, .{ .font = smaller_font, .advance = 12 } }) |loaded| {
         _ = try metrics.tryInsert(.{
             .scope = resources.kApplicationScope,
-            .name = loaded.font.font,
+            .name = loaded.font.font.name,
             .pixel_height = loaded.font.pixel_height,
             .ascender = loaded.font.pixel_height,
             .cap_height = loaded.font.pixel_height,
@@ -581,6 +583,64 @@ fn encodingsOffered(fx: *Fixture, into: [][]const u8) ![]const []const u8 {
     return into[0..completions.entries.len];
 }
 
+/// The labels and the details of the last prompt the palette was asked to present, titled
+/// `title`, and forgets the palette's requests.
+fn entriesOffered(fx: *Fixture, title: []const u8, labels: [][]const u8, details: [][]const u8) ![]const []const u8 {
+    const requests = action_palette.Requests.of(&fx.mem, &fx.tables, action_palette.requests_table_name);
+    var sent: [16]action_palette.Request = undefined;
+    var offered: ?*const action_palette.Completions = null;
+    for (requests.peek(&sent)) |request| switch (request) {
+        .present => |present| offered = present.completions,
+        else => {},
+    };
+    const completions = offered orelse return error.NothingPresented;
+    try std.testing.expectEqualStrings(title, completions.title);
+    for (completions.entries, 0..) |entry, index| {
+        labels[index] = entry.label;
+        details[index] = entry.detail;
+    }
+    requests.reset();
+    return labels[0..completions.entries.len];
+}
+
+test "the buffers listed hold the figures, the latest visited first: the one shown last to switch to, first to kill" {
+    const allocator = std.testing.allocator;
+    var fx: Fixture = .{};
+    try fx.init(allocator);
+    defer fx.deinit();
+    const context = mesha.figure.Context{ .memory = &fx.mem, .tables = &fx.tables, .atoms = &fx.atoms };
+    try figure_runtime.init(context);
+    defer figure_runtime.deinit(context) catch unreachable;
+    try initFigureOpening(&fx);
+    const own = try openScratchWindow(&fx);
+    const blue = fx.atoms.intern("blue");
+    const scope = mesha.resources.applicationScope(fx.tables.memory);
+    try figure_runtime.domain.library.create(&fx.tables, &fx.atoms, .{ .scope = scope, .doc = blue, .path = "/home/someone/art/blue.mshf" });
+    try transport_fixture.synchronize(&fx.mem, &fx.atoms, &fx.tables);
+    const note = openNoteBuffer(&fx, modes.buffer);
+    // *scratch* shown and focused, visited after the figure and the note.
+    buffer_list.visit(&fx.tables, .figure, blue);
+    buffer_list.visit(&fx.tables, .text, note);
+    buffer_list.visit(&fx.tables, .text, plugin.text_editor_api.scratch_buffer);
+    state.setViewFocus(&fx.tables, &fx.atoms, own);
+    fx.resetCommands();
+
+    var labels: [16][]const u8 = undefined;
+    var details: [16][]const u8 = undefined;
+    try systemAction(&fx, text_panel.system(), Atom.from("text_switch_buffer"));
+    const switching = try entriesOffered(&fx, "Switch to buffer", &labels, &details);
+    try std.testing.expectEqualStrings("*note*", switching[0]);
+    try std.testing.expectEqualStrings("blue", switching[1]);
+    try std.testing.expect(std.mem.startsWith(u8, details[1], "Figure"));
+    try std.testing.expectEqualStrings("*scratch*", switching[switching.len - 1]);
+
+    try systemAction(&fx, text_panel.system(), Atom.from("text_kill_buffer"));
+    const killing = try entriesOffered(&fx, "Kill buffer", &labels, &details);
+    try std.testing.expectEqualStrings("*scratch*", killing[0]);
+    try std.testing.expectEqualStrings("*note*", killing[1]);
+    try std.testing.expectEqualStrings("blue", killing[2]);
+}
+
 /// The palette's event `event` for the encodings' prompt, as its owner hears it.
 fn encodingPromptEvent(fx: *Fixture, event: action_palette.Msg.Event) !void {
     const tag = Atom.from("text_panel_encoding");
@@ -597,7 +657,7 @@ test "the encodings offered are UTF-8 alone until the host says which it convert
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     // Nothing is asked of the host until an encodings' prompt opens.
     try std.testing.expectError(error.NothingAsked, encodingsAsked(&fx));
-    _ = try openTextWorkspace(&fx);
+    _ = try openScratchWindow(&fx);
     var labels: [plugin.text_editor_api.known_encodings.len + 1][]const u8 = undefined;
 
     // The first prompt asks which of the known encodings the host converts, and before the
@@ -691,30 +751,47 @@ fn encodingChanges(fx: *Fixture) EncodingChanges {
     return changes;
 }
 
-test "a window a person put on *scratch* survives a workspace change, and the text workspace's own window does not" {
+test "the figure stage takes the focused text window's place, and a buffer shown from the stage takes the stage's" {
     var fx: Fixture = .{};
-    const own = try startInTextWorkspace(&fx);
+    const own = try startWithScratchWindow(&fx);
     defer fx.deinit();
-    // The person splits the workspace's window: a second window on `*scratch*`, with its own
-    // point.
-    try systemAction(&fx, text_panel.system(), Atom.from("text_split_below"));
-    const split = textPanelsOpened(&fx);
-    try std.testing.expectEqual(@as(usize, 1), split.count);
-    const person = split.last;
+    const figure_stage = Atom.from(fixed_panels.figure_stage);
+    // A second window, beside the first, which keeps the focus.
+    try systemAction(&fx, text_panel.system(), Atom.from("text_split_right"));
+    const other = textPanelsOpened(&fx).last;
     applyPanelRequests(&fx);
     try runSystem(&fx, text_panel.system());
     applyPanelRequests(&fx);
-    try std.testing.expectEqual(plugin.text_editor_api.scratch_buffer, textWindow(&fx, person).?.buffer.*);
+    try std.testing.expect(panels_mod.hasFocus(&fx.tables, &fx.atoms, own));
+    const own_frame = panels_mod.panelFor(&fx.tables, &fx.atoms, own).?.frame;
 
-    activateEmpty(&fx, .app);
+    // Opening a figure: the figure_stage opens where the focused window was, with its frame and the
+    // focus, and the window's row goes, so it does not open again.
+    fixed_panels.showInPlace(&fx.tables, &fx.atoms, figure_stage);
+    try runSystem(&fx, text_panel.system());
+    try runSystem(&fx, fixed_panels.shownPanelsSystem());
+    applyPanelRequests(&fx);
+    try std.testing.expect(panels_mod.hasFocus(&fx.tables, &fx.atoms, figure_stage));
+    try std.testing.expectEqual(own_frame, panels_mod.panelFor(&fx.tables, &fx.atoms, figure_stage).?.frame);
+    try std.testing.expect(!panels_mod.isOpen(&fx.tables, &fx.atoms, own));
     try settleTextPanels(&fx);
-    // The person's window opens again beside the new arrangement, keeping its point; the
-    // workspace's own is gone.
-    const reopened = textPanelsOpened(&fx);
-    try std.testing.expectEqual(@as(usize, 1), reopened.count);
-    try std.testing.expectEqual(person, reopened.last);
-    try std.testing.expectEqual(@as(u8, 1), textWindow(&fx, person).?.has_point.*);
     try std.testing.expect(textWindow(&fx, own) == null);
+    try std.testing.expectEqual(@as(usize, 0), textPanelsOpened(&fx).count);
+    try std.testing.expect(panels_mod.isOpen(&fx.tables, &fx.atoms, other));
+
+    // A buffer chosen while the figure_stage has the focus opens in the figure_stage's place, which closes.
+    state.setViewFocus(&fx.tables, &fx.atoms, figure_stage);
+    const note = openNoteBuffer(&fx, modes.buffer);
+    text_panel.showBuffer(&fx.tables, note, .this_window);
+    try runSystem(&fx, text_panel.system());
+    try runSystem(&fx, fixed_panels.shownPanelsSystem());
+    const shown_note = textPanelsOpened(&fx).last;
+    applyPanelRequests(&fx);
+    try std.testing.expect(!fixed_panels.panelShown(&fx.tables, figure_stage));
+    try std.testing.expect(!panels_mod.isOpen(&fx.tables, &fx.atoms, figure_stage));
+    try std.testing.expect(panels_mod.hasFocus(&fx.tables, &fx.atoms, shown_note));
+    try std.testing.expectEqual(own_frame, panels_mod.panelFor(&fx.tables, &fx.atoms, shown_note).?.frame);
+    try std.testing.expectEqual(note, textWindow(&fx, shown_note).?.buffer.*);
 }
 
 /// A buffer of the test's own that no window shows, with `mode` its own major mode.
@@ -727,9 +804,8 @@ fn openNoteBuffer(fx: *Fixture, mode: Atom) Atom {
 }
 
 test "a buffer shown in the other window from a text window opens beside it, takes the focus and has its own mode" {
-    const modes = @import("modes.zig");
     var fx: Fixture = .{};
-    const own = try startInTextWorkspace(&fx);
+    const own = try startWithScratchWindow(&fx);
     defer fx.deinit();
     try plugin.action_api.ensureTables(try fx.mem.tableScratchAllocator(), &fx.atoms, &fx.tables);
     var published: panels_mod.FocusTarget = .{};
@@ -767,11 +843,10 @@ test "a buffer shown in the other window from a text window opens beside it, tak
 }
 
 test "a buffer shown in the other window from a panel that is not a text window goes in the text window there" {
-    const modes = @import("modes.zig");
     var fx: Fixture = .{};
-    const own = try startInTextWorkspace(&fx);
+    const own = try startWithScratchWindow(&fx);
     defer fx.deinit();
-    // vcs-git has the focus, the text workspace's window beside it.
+    // vcs-git has the focus, a window on `*scratch*` beside it.
     state.setViewFocus(&fx.tables, &fx.atoms, Atom.from("vcs_git"));
     const note = openNoteBuffer(&fx, modes.vcs_message);
     text_panel.showBuffer(&fx.tables, note, .other_window);
@@ -801,9 +876,8 @@ test "a buffer shown in the other window from a panel that is not a text window 
 }
 
 test "a buffer shown by request gives its window back as it closes, and a window made for it closes" {
-    const modes = @import("modes.zig");
     var fx: Fixture = .{};
-    const own = try startInTextWorkspace(&fx);
+    const own = try startWithScratchWindow(&fx);
     defer fx.deinit();
     // The window shows a buffer of the person's, `*work*`, with `*scratch*` hidden.
     const work = Atom.from("*work*");
@@ -892,9 +966,8 @@ fn focusPreviousAsked(fx: *Fixture) usize {
 }
 
 test "a buffer shown by request and closed while no text window is open leaves no row behind" {
-    const modes = @import("modes.zig");
     var fx: Fixture = .{};
-    const own = try startInTextWorkspace(&fx);
+    const own = try startWithScratchWindow(&fx);
     defer fx.deinit();
     const note = openNoteBuffer(&fx, modes.vcs_message);
     state.setViewFocus(&fx.tables, &fx.atoms, own);
@@ -902,9 +975,9 @@ test "a buffer shown by request and closed while no text window is open leaves n
     try runSystem(&fx, text_panel.system());
     try std.testing.expectEqual(note, textWindow(&fx, own).?.buffer.*);
 
-    // In another workspace, with the window gone, the note closes while no text window is open:
+    // With the window gone, the figure stage shown, the note closes while no text window is open:
     // the row of the note, shown, goes with it.
-    workspaces.arrangeNow(&fx.tables, &fx.atoms, .figure);
+    fixed_panels.layOutNow(&fx.tables, &fx.atoms, .figure_stage);
     fx.tables.findByName(Atom.from(text_panel.table_name)).?.clear();
     try runSystem(&fx, text_panel.system());
     fx.text_editors.apply(&fx.tables, .{ .close = note });
@@ -916,11 +989,8 @@ test "a buffer shown by request and closed while no text window is open leaves n
 }
 
 test "vcs git commit: a window on the message buffer has the vcs_message mode" {
-    const modes = @import("modes.zig");
-    const git_status = @import("vcs/git_status.zig");
-    const git_commit = @import("vcs/git_commit.zig");
     var fx: Fixture = .{};
-    const own = try startInTextWorkspace(&fx);
+    const own = try startWithScratchWindow(&fx);
     defer fx.deinit();
     try plugin.action_api.ensureTables(try fx.mem.tableScratchAllocator(), &fx.atoms, &fx.tables);
     var published: panels_mod.FocusTarget = .{};
@@ -933,7 +1003,7 @@ test "vcs git commit: a window on the message buffer has the vcs_message mode" {
     counts.next().?.view.staged_count.* = 1;
 
     // `c c`: the commit menu's answer, as the menu gives it.
-    const chosen: @import("transient.zig").Chosen = .{ .id = @intFromEnum(git_commit.MenuItem.commit), .cancelled = 0, .state = .{} };
+    const chosen: transient.Chosen = .{ .id = @intFromEnum(git_commit.MenuItem.commit), .cancelled = 0, .state = .{} };
     try systemMessage(&fx, git_status.system(), .{ .tag = Atom.from(git_commit.Msg.vcs_git_commit_chosen), .payload = std.mem.asBytes(&chosen) });
     mesha_runtime.text_editor.applyCommands(&fx.mem, &fx.atoms, &fx.tables, &fx.text_editors);
     try runSystem(&fx, text_panel.system());
@@ -964,21 +1034,20 @@ fn routedMajor(fx: *Fixture) !Atom {
 }
 
 test "a panel's owner asks for its modes as it takes the focus, and the palette for its prompt's until it closes" {
-    const modes = @import("modes.zig");
     var fx: Fixture = .{};
-    _ = try startInTextWorkspace(&fx);
+    _ = try startWithScratchWindow(&fx);
     defer fx.deinit();
     try plugin.action_api.ensureTables(try fx.mem.tableScratchAllocator(), &fx.atoms, &fx.tables);
     // What the host publishes each frame of the focus's moves.
     var published: panels_mod.FocusTarget = .{};
 
-    // The text workspace's window has the focus.
+    // The window on `*scratch*` has the focus.
     panels_mod.dispatchFocusChanges(&fx.tables, &fx.atoms, &published);
     try runSystem(&fx, text_panel.modesSystem());
     try std.testing.expectEqual(modes.buffer, try routedMajor(&fx));
 
-    // The figure workspace's stage takes it.
-    workspaces.arrangeNow(&fx.tables, &fx.atoms, .figure);
+    // The figure stage takes it.
+    fixed_panels.layOutNow(&fx.tables, &fx.atoms, .figure_stage);
     panels_mod.applyCmd(&fx.tables, &fx.atoms, .{ .focus = .{ .id = Atom.from(figure_workspace.canvas_id) } });
     panels_mod.dispatchFocusChanges(&fx.tables, &fx.atoms, &published);
     try runSystem(&fx, figure_workspace.system());
@@ -1002,7 +1071,7 @@ const KeyboardHold = enum { form_field, dirty_close };
 /// next frame's start), and returns the major mode the actions system is left with.
 fn tableModesAfterHold(hold: KeyboardHold) !Atom {
     var fx: Fixture = .{};
-    _ = try startInTextWorkspace(&fx);
+    _ = try startWithScratchWindow(&fx);
     defer fx.deinit();
     try plugin.action_api.ensureTables(try fx.mem.tableScratchAllocator(), &fx.atoms, &fx.tables);
     var published: panels_mod.FocusTarget = .{};
@@ -1023,7 +1092,7 @@ fn tableModesAfterHold(hold: KeyboardHold) !Atom {
         }
     }.run;
     try frame(&fx, &published);
-    try std.testing.expectEqual(@import("modes.zig").table, try routedMajor(&fx));
+    try std.testing.expectEqual(modes.table, try routedMajor(&fx));
 
     const authoring_ui = state.authoringUi(&fx.tables, &fx.atoms);
     switch (hold) {
@@ -1047,31 +1116,59 @@ fn tableModesAfterHold(hold: KeyboardHold) !Atom {
 }
 
 test "a table window has table's keys again once a form field it opened stops editing" {
-    try std.testing.expectEqual(@import("modes.zig").table, try tableModesAfterHold(.form_field));
+    try std.testing.expectEqual(modes.table, try tableModesAfterHold(.form_field));
 }
 
 test "a table window has table's keys again once its dirty-close question is cancelled" {
-    try std.testing.expectEqual(@import("modes.zig").table, try tableModesAfterHold(.dirty_close));
+    try std.testing.expectEqual(modes.table, try tableModesAfterHold(.dirty_close));
 }
 
-test "switching to app and then to text arranges the text workspace's window on *scratch* again, once" {
+test "the figure stage takes a focused table window's place, and the window's row goes" {
     var fx: Fixture = .{};
-    _ = try startInTextWorkspace(&fx);
+    _ = try startWithScratchWindow(&fx);
     defer fx.deinit();
-    try systemAction(&fx, workspaces.system(), Atom.from("workspace_app"));
+    const target = try targetTable(std.testing.allocator, &fx.atoms, &fx.tables);
+    const name = fx.tables.get(target).?.name;
+    try std.testing.expect(windows.open(&fx.tables, &fx.atoms, target));
+    try runSystem(&fx, windows.system());
+    applyPanelRequests(&fx);
+    panels_mod.applyCmd(&fx.tables, &fx.atoms, .{ .focus = .{ .id = name } });
+    state.setViewFocus(&fx.tables, &fx.atoms, name);
+    const window_frame = panels_mod.panelFor(&fx.tables, &fx.atoms, name).?.frame;
+
+    const figure_stage = Atom.from(fixed_panels.figure_stage);
+    fixed_panels.showInPlace(&fx.tables, &fx.atoms, figure_stage);
+    try runSystem(&fx, fixed_panels.shownPanelsSystem());
+    applyPanelRequests(&fx);
+    try std.testing.expect(!panels_mod.isOpen(&fx.tables, &fx.atoms, name));
+    try std.testing.expectEqual(window_frame, panels_mod.panelFor(&fx.tables, &fx.atoms, figure_stage).?.frame);
+    // The windows run again: the replaced window's row goes, so it opens no more.
+    for (0..3) |_| {
+        try runSystem(&fx, windows.system());
+        try runSystem(&fx, fixed_panels.shownPanelsSystem());
+        applyPanelRequests(&fx);
+    }
+    try std.testing.expect(!panels_mod.isOpen(&fx.tables, &fx.atoms, name));
+    try std.testing.expectEqual(@as(u32, 0), fx.tables.findByName(Atom.from(state.windows_name)).?.count());
+}
+
+test "closing the figure stage, the last panel, leaves the window empty" {
+    var fx: Fixture = .{};
+    const own = try startWithScratchWindow(&fx);
+    defer fx.deinit();
+    const figure_stage = Atom.from(fixed_panels.figure_stage);
+    fixed_panels.showInPlace(&fx.tables, &fx.atoms, figure_stage);
+    try runSystem(&fx, text_panel.system());
+    try runSystem(&fx, fixed_panels.shownPanelsSystem());
     applyPanelRequests(&fx);
     try settleTextPanels(&fx);
+    try std.testing.expect(textWindow(&fx, own) == null);
     try std.testing.expectEqual(@as(usize, 0), textPanelsOpened(&fx).count);
-    fx.resetCommands();
 
-    try systemAction(&fx, workspaces.system(), Atom.from("workspace_text"));
+    fixed_panels.hidePanel(&fx.tables, figure_stage);
+    try runSystem(&fx, fixed_panels.shownPanelsSystem());
     applyPanelRequests(&fx);
-    try std.testing.expectEqual(workspaces.Workspace.text, workspaces.activeWorkspace(&fx.tables, &fx.atoms));
-    try runSystem(&fx, text_panel.system());
-    const opened = textPanelsOpened(&fx);
-    try std.testing.expectEqual(@as(usize, 1), opened.count);
-    try std.testing.expectEqual(plugin.text_editor_api.scratch_buffer, textWindow(&fx, opened.last).?.buffer.*);
-    applyPanelRequests(&fx);
+    try std.testing.expect(!panels_mod.isOpen(&fx.tables, &fx.atoms, figure_stage));
     try settleTextPanels(&fx);
     try std.testing.expectEqual(@as(usize, 0), textPanelsOpened(&fx).count);
 }
@@ -1489,11 +1586,10 @@ test "figure_open action dispatch opens the find-file prompt" {
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     try mesha.panels.ensure(try fx.mem.tableScratchAllocator(), &fx.atoms, &fx.tables);
     try transport_fixture.synchronize(&fx.mem, &fx.atoms, &fx.tables);
-    const open = @import("open.zig");
     const scratch = try fx.mem.tableScratchAllocator();
     try sequencer_mod.ensureInboxes(scratch, &fx.atoms, &fx.tables, &.{ .name = "open_test", .steps = &.{.{ .system = open.system() }} });
     fx.resetCommands();
-    const workspace_before = workspaces.activeWorkspace(&fx.tables, &fx.atoms);
+    const stage_before = fixed_panels.panelShown(&fx.tables, Atom.from(fixed_panels.figure_stage));
 
     try editorAction(&fx, .{ .tag = Atom.from("figure_open") });
     const reply = try findFileListingAsked(&fx, "");
@@ -1504,8 +1600,8 @@ test "figure_open action dispatch opens the find-file prompt" {
     const completions = action_palette.currentCompletions(&fx.tables, &fx.atoms).?;
     try std.testing.expectEqual(open.find_file_owner, completions.owner);
     try std.testing.expectEqualStrings("/home/someone/art/", completions.initial_query);
-    // The workspace changes only once a figure or a sketch is chosen.
-    try std.testing.expectEqual(workspace_before, workspaces.activeWorkspace(&fx.tables, &fx.atoms));
+    // The stage shows only once a figure or a sketch is chosen.
+    try std.testing.expectEqual(stage_before, fixed_panels.panelShown(&fx.tables, Atom.from(fixed_panels.figure_stage)));
 }
 
 test "figure_open opens find-file on the directory of the figure shown" {
@@ -1521,8 +1617,8 @@ test "figure_open opens find-file on the directory of the figure shown" {
     const blue = fx.atoms.intern("blue");
     const scope = mesha.resources.applicationScope(fx.tables.memory);
     try figure_runtime.domain.library.create(&fx.tables, &fx.atoms, .{ .scope = scope, .doc = blue, .path = "/home/someone/art/blue.mshf" });
-    @import("figure/session.zig").get(&fx.tables).doc.* = blue;
-    figure_workspace.openWorkspace(&fx.tables, &fx.atoms);
+    session.get(&fx.tables).doc.* = blue;
+    figure_workspace.showStage(&fx.tables, &fx.atoms);
     try transport_fixture.synchronize(&fx.mem, &fx.atoms, &fx.tables);
     fx.resetCommands();
 
@@ -1530,12 +1626,12 @@ test "figure_open opens find-file on the directory of the figure shown" {
     _ = try findFileListingAsked(&fx, "/home/someone/art");
 }
 
-/// With the text workspace's window on `*scratch*`, its buffer holding the file at `path`
+/// With a window on `*scratch*`, its buffer holding the file at `path`
 /// (none when empty) and the window the focused view, asks for find-file as `C-x C-f` does:
 /// the open system's one request, a listing, must name `directory`.
 fn findFileFromBuffer(path: []const u8, directory: []const u8) !void {
     var fx: Fixture = .{};
-    const panel = try startInTextWorkspace(&fx);
+    const panel = try startWithScratchWindow(&fx);
     defer fx.deinit();
     const buffers = fx.tables.findByName(Atom.from(plugin.text_editor_api.buffers_table_name)).?;
     var rows = buffers.query(struct { buffer: *Atom, path: *Table.String });
@@ -1547,7 +1643,7 @@ fn findFileFromBuffer(path: []const u8, directory: []const u8) !void {
     fx.resetCommands();
     plugin.text_editor_api.Requests.of(&fx.mem, &fx.tables, plugin.text_editor_api.commands_table_name).reset();
 
-    try systemAction(&fx, @import("open.zig").system(), Atom.from("text_find_file"));
+    try systemAction(&fx, open.system(), Atom.from("text_find_file"));
     _ = try findFileListingAsked(&fx, directory);
 }
 
@@ -1640,13 +1736,11 @@ test "inspector hover converges on the shared app_state.hovered_id" {
 }
 
 const keybinds = mesha.keybinds;
-const editor_sequencer = @import("editor_sequencer.zig");
 
 /// Chooses `project`, remembered, in the prompt `project_switch` opens: the one request it
 /// then sends the OS, which must be to enter `project`, taken from its rows. The text editor's
 /// requests are forgotten, so a test sees only those that follow the OS's answer.
 fn projectSwitchAsked(fx: *Fixture, project: []const u8) !os_mod.CmdPayload {
-    const open = @import("open.zig");
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     const projects = fx.tables.findByName(Atom.from(plugin.text_editor_api.projects_table_name)).?;
     _ = try projects.tryInsert(.{ .path = project });
@@ -1673,7 +1767,7 @@ fn projectSwitchAsked(fx: *Fixture, project: []const u8) !os_mod.CmdPayload {
 fn answerProjectEntered(fx: *Fixture, asked: os_mod.CmdPayload, result: os_mod.WorkingDirectoryMsg.Result) !void {
     const answer: os_mod.WorkingDirectoryMsg = .{ .result = result };
     const answered = asked.set_working_directory.reply.answered(std.mem.asBytes(&answer));
-    try systemMessage(fx, @import("open.zig").system(), answered);
+    try systemMessage(fx, open.system(), answered);
 }
 
 test "project_switch sends the chosen directory to the OS and remembers it when it changed" {
@@ -1714,7 +1808,7 @@ test "project_switch with no project remembered reads a directory from the worki
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     fx.resetCommands();
-    try systemAction(&fx, @import("open.zig").system(), Atom.from("project_switch"));
+    try systemAction(&fx, open.system(), Atom.from("project_switch"));
     // The listing is answered to the project prompt, not to find-file.
     const reply = try findFileListingAsked(&fx, "");
     try std.testing.expectEqual(Atom.from("open_project_listing"), reply.tag);
@@ -1733,8 +1827,6 @@ test "the project's keys are bound in global" {
 }
 
 // ---- transient menus --------------------------------------------------------------------------
-
-const transient = @import("transient.zig");
 
 /// A menu as a presenter keeps it, a constant: a switch, an option and a command.
 const test_transient_menu: ui.transient.Menu = .{
@@ -1802,7 +1894,6 @@ fn transientAnswer(fx: *Fixture) !?transient.Chosen {
 }
 
 test "a transient captures keys until a command is chosen, and answers its id and arguments" {
-    const modes = @import("modes.zig");
     var fx: Fixture = .{};
     try fx.init(std.testing.allocator);
     defer fx.deinit();
@@ -1822,11 +1913,11 @@ test "a transient captures keys until a command is chosen, and answers its id an
     try transientChar(&fx, '=');
     try transientChar(&fx, 'n');
     var asked: [2]action_palette.Request = undefined;
-    const prompts = action_palette.Requests.of(&fx.mem, &fx.tables, action_palette.requests_table_name).peek(&asked);
-    try std.testing.expectEqual(@as(usize, 1), prompts.len);
-    try std.testing.expectEqualStrings("Limit", prompts[0].present.completions.prompt);
+    const asked_prompts = action_palette.Requests.of(&fx.mem, &fx.tables, action_palette.requests_table_name).peek(&asked);
+    try std.testing.expectEqual(@as(usize, 1), asked_prompts.len);
+    try std.testing.expectEqualStrings("Limit", asked_prompts[0].present.completions.prompt);
     try std.testing.expect(!transientCaptures(&fx));
-    const value_reply = prompts[0].present.reply;
+    const value_reply = asked_prompts[0].present.reply;
     var typed = try paletteEvent(&fx, value_reply.tag, .{ .kind = .completed, .completion = .{ .label = "" }, .query = "20" });
     typed.user_data = value_reply.user_data.bytes;
     try systemMessage(&fx, transient.system(), typed);
@@ -1913,9 +2004,9 @@ fn readTestValue(fx: *Fixture) !sequencer_mod.ReplyTo {
     try transientChar(fx, '=');
     try transientChar(fx, 'n');
     var asked: [2]action_palette.Request = undefined;
-    const prompts = action_palette.Requests.of(&fx.mem, &fx.tables, action_palette.requests_table_name).peek(&asked);
-    try std.testing.expectEqual(@as(usize, 1), prompts.len);
-    const reply = prompts[0].present.reply;
+    const asked_prompts = action_palette.Requests.of(&fx.mem, &fx.tables, action_palette.requests_table_name).peek(&asked);
+    try std.testing.expectEqual(@as(usize, 1), asked_prompts.len);
+    const reply = asked_prompts[0].present.reply;
     try runPalette(fx);
     try std.testing.expectEqual(transient.value_prompt_owner, action_palette.currentOwner(&fx.tables, &fx.atoms).?);
     return reply;
@@ -2035,7 +2126,6 @@ test "a transient presented while a palette prompt is open is refused and answer
 }
 
 test "a palette prompt another system opens over a transient closes it, and the modes come back as it closes" {
-    const modes = @import("modes.zig");
     var fx: Fixture = .{};
     try fx.init(std.testing.allocator);
     defer fx.deinit();
@@ -2177,8 +2267,8 @@ test "action search uses Actions list subscriptions and sends invoke_action for 
     try deliverActionListReply(&fx, "row_ad", &rows);
     const completions = action_palette.currentCompletions(&fx.tables, &fx.atoms).?;
     try std.testing.expectEqual(@as(usize, 1), completions.entries.len);
-    try std.testing.expectEqualStrings("Add a row", completions.entries[0].label);
-    try std.testing.expectEqualStrings("global.row_add", completions.entries[0].detail);
+    try std.testing.expectEqualStrings("global.row_add", completions.entries[0].label);
+    try std.testing.expectEqualStrings("Add a row", completions.entries[0].detail);
 
     // The submit waits for the text editor's report of its text, which it asks for.
     try paletteKey(&fx, action_palette.Msg.submit);
@@ -2223,16 +2313,15 @@ test "the action list shows the listed actions offered that match its query" {
     try std.testing.expectEqualStrings("row", completions.initial_query);
     var listed_row_add = false;
     for (completions.entries) |entry| {
-        try std.testing.expect(!std.mem.eql(u8, entry.detail, "global.figure_open"));
-        try std.testing.expect(!std.mem.eql(u8, entry.detail, "global.row_hidden"));
-        try std.testing.expect(!std.mem.eql(u8, entry.label, "row_figure"));
-        if (std.mem.eql(u8, entry.detail, "global.row_add")) listed_row_add = true;
+        try std.testing.expect(!std.mem.eql(u8, entry.label, "global.figure_open"));
+        try std.testing.expect(!std.mem.eql(u8, entry.label, "global.row_hidden"));
+        try std.testing.expect(!std.mem.eql(u8, entry.label, "figure.row_figure"));
+        if (std.mem.eql(u8, entry.label, "global.row_add")) listed_row_add = true;
     }
     try std.testing.expect(listed_row_add);
 }
 
 test "an action picked from the palette is asked for after the modes it was opened over" {
-    const modes = @import("modes.zig");
     var fx: Fixture = .{};
     try fx.init(std.testing.allocator);
     defer fx.deinit();
@@ -2284,10 +2373,12 @@ test "action palette toggles focus clicks with modal keyboard ownership" {
     try runPalette(&fx);
     fx.resetCommands();
     lib.syncFocusClicks(&fx.tables, &fx.atoms);
-    try std.testing.expectEqual(@as(u8, 1), state.viewFocus(&fx.tables, &fx.atoms).focus_clicks_disabled.*);
+    try std.testing.expectEqual(@as(u8, 2), state.viewFocus(&fx.tables, &fx.atoms).focus_clicks_disabled.*);
     try std.testing.expectEqual(@as(usize, 1), panelRequestCount(&fx.tables));
+    // The minibuffer's prompt has the keyboard: the panels are told it is outside them.
     const disable = panelRequestAt(&fx.tables, 0).?;
     try std.testing.expect(disable == .disable_focus_clicks);
+    try std.testing.expectEqual(plugin.panels.KeyboardPlace.outside_panels, disable.disable_focus_clicks.keyboard);
 
     fx.resetCommands();
     var dismiss: plugin.app_commands.Payload = .{ .action_palette = .{ .dismiss = .{} } };
@@ -2314,7 +2405,10 @@ test "form context disables and restores focus clicks" {
     authoring_ui.form_focus.* = @intFromEnum(state.FormFocus.meta_key);
     lib.syncFocusClicks(&fx.tables, &fx.atoms);
     try std.testing.expectEqual(@as(usize, 1), panelRequestCount(&fx.tables));
-    try std.testing.expect(panelRequestAt(&fx.tables, 0).? == .disable_focus_clicks);
+    // A form is in the focused panel, which keeps the keyboard.
+    const disable = panelRequestAt(&fx.tables, 0).?;
+    try std.testing.expect(disable == .disable_focus_clicks);
+    try std.testing.expectEqual(plugin.panels.KeyboardPlace.focused_panel, disable.disable_focus_clicks.keyboard);
 
     fx.resetCommands();
     authoring_ui.form_focus.* = @intFromEnum(state.FormFocus.none);
@@ -2620,7 +2714,6 @@ test "action palette Tab completes a directory with its slash in find-file" {
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     try initModes(&fx);
     fx.resetCommands();
-    const open = @import("open.zig");
     try systemAction(&fx, open.system(), Atom.from("project_find_directory"));
     const reply = try findFileListingAsked(&fx, "");
     const listed = [_]plugin.text_editor_api.ListedEntry{ .{ .kind = .file, .name = "notes.txt" }, .{ .kind = .directory, .name = "cast" } };
@@ -2642,7 +2735,6 @@ test "action palette Tab completes a directory with its slash in find-file" {
 /// Types `typed` in the open find-file prompt and lists its directory, asked as `directory`,
 /// as holding `entries` under `real_directory`: the prompt then offers them.
 fn typeAndList(fx: *Fixture, typed: []const u8, directory: []const u8, real_directory: []const u8, entries: []const plugin.text_editor_api.ListedEntry) !void {
-    const open = @import("open.zig");
     try editorReport(fx, typed);
     try dispatchEditorCommands(fx);
     try runSystem(fx, open.system());
@@ -2659,7 +2751,6 @@ test "action palette Tab completes to the entry selected with C-n, not to the en
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     try initModes(&fx);
     fx.resetCommands();
-    const open = @import("open.zig");
     try systemAction(&fx, open.system(), Atom.from("project_find_directory"));
     const reply = try findFileListingAsked(&fx, "");
     const listed = [_]plugin.text_editor_api.ListedEntry{ .{ .kind = .directory, .name = "proj" }, .{ .kind = .directory, .name = "prog" } };
@@ -2704,32 +2795,52 @@ test "action palette Tab does nothing in a pattern prompt" {
     try std.testing.expectEqualStrings("fn main", promptText(&fx));
 }
 
-test "dialog keyboard navigation selects alternatives without changing safe default" {
+test "a dialog's answers narrow to the text typed and Enter takes the one selected" {
     var fx: Fixture = .{};
     try fx.init(std.testing.allocator);
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
-    const entries = [_]action_palette.Completion{ .{ .label = "Save" }, .{ .label = "Discard" }, .{ .label = "Cancel" } };
-    const completions = action_palette.Completions{ .owner = fx.atoms.intern("test_dialog"), .presentation = .dialog, .default_entry = 2, .entries = &entries };
-    const reply_route = testReply(fx.atoms.intern("test_reply"));
-    action_palette.request(&fx.mem, &fx.tables, .{ .present = .{ .completions = &completions, .reply = reply_route } });
-    try runPalette(&fx);
-    try std.testing.expectEqual(@as(u32, 2), action_palette.prompt(&fx.tables, &fx.atoms).selected.*);
-    try paletteKey(&fx, action_palette.Msg.up);
-    try std.testing.expectEqual(@as(u32, 1), action_palette.prompt(&fx.tables, &fx.atoms).selected.*);
-    try paletteKey(&fx, action_palette.Msg.up);
-    try std.testing.expectEqual(@as(u32, 0), action_palette.prompt(&fx.tables, &fx.atoms).selected.*);
-    try std.testing.expectEqual(@as(?u32, 2), completions.default_entry);
-    const no_default = action_palette.Completions{ .owner = completions.owner, .presentation = .dialog, .entries = &entries };
-    action_palette.request(&fx.mem, &fx.tables, .{ .present = .{ .completions = &no_default, .reply = reply_route } });
-    try runPalette(&fx);
-    try std.testing.expectEqual(std.math.maxInt(u32), action_palette.prompt(&fx.tables, &fx.atoms).selected.*);
+    try initModes(&fx);
     fx.resetCommands();
+    const entries = [_]action_palette.Completion{ .{ .label = "Save" }, .{ .label = "Close without saving" }, .{ .label = "Cancel" } };
+    const reply_route = testReply(Atom.from("test_dialog_reply"));
+
+    // With no default nothing is selected: Enter takes no answer until one is moved to.
+    const no_default = action_palette.Completions{ .owner = fx.atoms.intern("test_dialog"), .presentation = .dialog, .entries = &entries };
+    action_palette.request(&fx.mem, &fx.tables, .{ .present = .{ .completions = &no_default, .reply = reply_route } });
+    try dispatchEditorCommands(&fx);
+    try std.testing.expectEqual(std.math.maxInt(u32), action_palette.prompt(&fx.tables, &fx.atoms).selected.*);
     try paletteKey(&fx, action_palette.Msg.submit);
-    // No implicit destructive default.
-    try std.testing.expectEqual(@as(usize, 0), appRequestCount(&fx));
-    try paletteKey(&fx, action_palette.Msg.up);
+    try editorReport(&fx, "");
+    try dispatchEditorCommands(&fx);
+    try std.testing.expect(action_palette.requestOpen(&fx.tables, &fx.atoms));
+    try paletteKey(&fx, Atom.from("prompt_previous"));
     try std.testing.expectEqual(@as(u32, 2), action_palette.prompt(&fx.tables, &fx.atoms).selected.*);
+
+    // The default is selected as it opens.
+    const completions = action_palette.Completions{ .owner = no_default.owner, .presentation = .dialog, .default_entry = 2, .entries = &entries };
+    action_palette.request(&fx.mem, &fx.tables, .{ .present = .{ .completions = &completions, .reply = reply_route } });
+    try dispatchEditorCommands(&fx);
+    // The dialog replaced holds nothing chosen.
+    const replaced = try action_palette.eventOf(popEditorMessage(&fx));
+    try std.testing.expect(replaced.completion == null);
+    try std.testing.expectEqual(@as(u32, 2), action_palette.prompt(&fx.tables, &fx.atoms).selected.*);
+
+    // "sav" is held by the first two labels, ignoring case, not by "Cancel": the second of
+    // those listed is "Close without saving". The owner hears no query change.
+    try editorReport(&fx, "sav");
+    try dispatchEditorCommands(&fx);
+    try std.testing.expect(takeInboxMessage(&fx) == null);
+    try std.testing.expectEqual(@as(u32, 0), action_palette.prompt(&fx.tables, &fx.atoms).selected.*);
+    try paletteKey(&fx, Atom.from("prompt_next"));
+    try paletteKey(&fx, Atom.from("prompt_next"));
+    try std.testing.expectEqual(@as(u32, 1), action_palette.prompt(&fx.tables, &fx.atoms).selected.*);
+    try paletteKey(&fx, action_palette.Msg.submit);
+    try editorReport(&fx, "sav");
+    try dispatchEditorCommands(&fx);
+    const chosen = try action_palette.eventOf(popEditorMessage(&fx));
+    try std.testing.expectEqual(action_palette.Msg.EventKind.completed, chosen.kind);
+    try std.testing.expectEqualStrings("Close without saving", chosen.completion.?.label);
 }
 
 test "an action picked from M-x is invoked through the shared operation API" {
@@ -2765,11 +2876,11 @@ const ExpectedKey = struct { chord: []const u8, mode: []const u8, name: []const 
 
 /// The editor's and the stage's actions, and those its modules offer while they edit text, whose
 /// keys `expectKeysBound` looks for.
-const keyed_actions = lib.editor_actions ++ @import("stage.zig").app_actions ++ text_editor.actions ++
+const keyed_actions = lib.editor_actions ++ stage.app_actions ++ text_editor.actions ++
     text_panel.panel_actions ++ text_panel.isearch_actions ++ windows.cell_actions ++
-    windows.form_actions ++ action_palette.prompt_actions ++ table_view.actions ++ @import("vcs/git_status.zig").vcs_actions ++
-    @import("vcs/git_status.zig").vcs_git_actions ++ @import("vcs/git_commit.zig").message_actions ++
-    [_]plugin.action_api.Def{@import("vcs/git_log.zig").edit_action} ++ @import("vcs/git_rebase.zig").rebase_actions;
+    windows.form_actions ++ action_palette.prompt_actions ++ table_view.actions ++ git_status.vcs_actions ++
+    git_status.vcs_git_actions ++ git_commit.message_actions ++
+    [_]plugin.action_api.Def{git_log.edit_action} ++ git_rebase.rebase_actions;
 
 /// Expects each of `expected` among the bindings the actions system resolves while `major` is the
 /// major mode, or the key's own mode when `major` is none, with the editor's modes registered and
@@ -2788,13 +2899,13 @@ fn expectKeysBound(major: Atom, expected: []const ExpectedKey) !void {
     try mesha_runtime.actions.ensure(scratch, &atoms, &tables);
     try plugin.Keymaps.ensure(scratch, &atoms, &tables, plugin.action_api.keymaps_table_name);
     try plugin.Actions.ensure(scratch, &atoms, &tables, plugin.action_api.subscribed_table_name);
-    @import("modes.zig").registerAll(&tables);
+    modes.registerAll(&tables);
     try mesha_runtime.actions.route(&memory, &atoms, &tables);
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var keymap_rows: plugin.KeymapRows = .{ .keymaps = plugin.Keymaps.of(&memory, &tables, plugin.action_api.keymaps_table_name) };
     try declareDefaultKeymaps(arena.allocator(), &atoms, keymap_rows.sink());
-    const stage_keymap = try @import("stage.zig").buildKeymap(arena.allocator(), &atoms);
+    const stage_keymap = try stage.buildKeymap(arena.allocator(), &atoms);
     keymap_rows.sink().declare(stage_keymap);
 
     const bindings = tables.findByName(Atom.from(plugin.action_api.bindings_table_name)).?;
@@ -2824,7 +2935,7 @@ fn expectKeysBound(major: Atom, expected: []const ExpectedKey) !void {
 test "vcs git status: the keys of vcs and vcs_git are bound while vcs-git has the focus" {
     // `vcs_git` is under `vcs`, under `global`: no key of `text` reaches it, so `C-g` gives up
     // the panel's commands rather than leaving a text editor.
-    try expectKeysBound(@import("modes.zig").vcs_git, &.{
+    try expectKeysBound(modes.vcs_git, &.{
         .{ .chord = "n", .mode = "vcs", .name = "next" },
         .{ .chord = "C-n", .mode = "vcs", .name = "next" },
         .{ .chord = "p", .mode = "vcs", .name = "previous" },
@@ -2863,7 +2974,7 @@ test "vcs git status: the keys of vcs and vcs_git are bound while vcs-git has th
 
 test "vcs git rebase: the keys of vcs_rebase are bound in the rebase list, over vcs's" {
     // `p` is pick here, `C-p` moves up; `M-p` and `M-n` move the row; `q` leaves the list.
-    try expectKeysBound(@import("modes.zig").vcs_rebase, &.{
+    try expectKeysBound(modes.vcs_rebase, &.{
         .{ .chord = "p", .mode = "vcs_rebase", .name = "pick" },
         .{ .chord = "r", .mode = "vcs_rebase", .name = "reword" },
         .{ .chord = "e", .mode = "vcs_rebase", .name = "edit" },
@@ -2885,7 +2996,7 @@ test "vcs git rebase: the keys of vcs_rebase are bound in the rebase list, over 
 test "vcs git log: the keys of vcs_log are bound in the log view, over vcs_git's" {
     // The log is a page: `vcs`'s moves move through it, `e` edits the query, and `g`, `q`, `l`,
     // `$` and `?` stay the panel's.
-    try expectKeysBound(@import("modes.zig").vcs_log, &.{
+    try expectKeysBound(modes.vcs_log, &.{
         .{ .chord = "e", .mode = "vcs_log", .name = "edit_query" },
         .{ .chord = "n", .mode = "vcs", .name = "next" },
         .{ .chord = "C-n", .mode = "vcs", .name = "next" },
@@ -2904,7 +3015,7 @@ test "vcs git log: the keys of vcs_log are bound in the log view, over vcs_git's
 }
 
 test "vcs git commit: the keys of vcs_message are bound in the message buffer, over buffer's" {
-    try expectKeysBound(@import("modes.zig").vcs_message, &.{
+    try expectKeysBound(modes.vcs_message, &.{
         .{ .chord = "C-c C-c", .mode = "vcs_message", .name = "finish" },
         .{ .chord = "C-c C-k", .mode = "vcs_message", .name = "cancel" },
         .{ .chord = "C-x k", .mode = "vcs_message", .name = "cancel" },
@@ -2958,21 +3069,24 @@ test "every default key of the figure editor is bound in figure" {
         .{ .chord = "S-i", .mode = "figure", .name = "tool_ik" },
         .{ .chord = "e", .mode = "figure", .name = "tool_eraser" },
         .{ .chord = "x", .mode = "figure", .name = "color_target_toggle" },
+        .{ .chord = "C-/", .mode = "figure", .name = "undo" },
         .{ .chord = "C-z", .mode = "figure", .name = "undo" },
+        .{ .chord = "C-x u", .mode = "figure", .name = "undo" },
         .{ .chord = "C-S-z", .mode = "figure", .name = "redo" },
-        .{ .chord = "C-c", .mode = "figure", .name = "copy" },
-        .{ .chord = "C-x", .mode = "figure", .name = "cut" },
-        .{ .chord = "C-v", .mode = "figure", .name = "paste" },
+        .{ .chord = "C-S-/", .mode = "figure", .name = "redo" },
+        .{ .chord = "C-w", .mode = "figure", .name = "cut" },
+        .{ .chord = "M-w", .mode = "figure", .name = "copy" },
+        .{ .chord = "C-y", .mode = "figure", .name = "paste" },
         .{ .chord = "C-d", .mode = "figure", .name = "duplicate" },
-        .{ .chord = "C-a", .mode = "figure", .name = "select_all" },
+        .{ .chord = "C-x h", .mode = "figure", .name = "select_all" },
         .{ .chord = "M-a", .mode = "figure", .name = "deselect" },
         .{ .chord = "page_down", .mode = "figure", .name = "select_next" },
         .{ .chord = "page_up", .mode = "figure", .name = "select_previous" },
         .{ .chord = "delete", .mode = "figure", .name = "delete_bone" },
         .{ .chord = "backspace", .mode = "figure", .name = "delete_bone" },
         .{ .chord = "C-delete", .mode = "figure", .name = "delete_branch" },
-        .{ .chord = "C-g", .mode = "figure", .name = "folder_group" },
-        .{ .chord = "C-S-g", .mode = "figure", .name = "folder_ungroup" },
+        .{ .chord = "C-c C-g", .mode = "figure", .name = "folder_group" },
+        .{ .chord = "C-c C-u", .mode = "figure", .name = "folder_ungroup" },
         .{ .chord = "C-S-n", .mode = "figure", .name = "layer_add" },
         .{ .chord = "C-right_bracket", .mode = "figure", .name = "shape_forward" },
         .{ .chord = "C-left_bracket", .mode = "figure", .name = "shape_backward" },
@@ -2992,6 +3106,7 @@ test "every default key of the figure editor is bound in figure" {
         .{ .chord = "S-down", .mode = "figure", .name = "nudge_down_large" },
         .{ .chord = "enter", .mode = "figure", .name = "chain_finish" },
         .{ .chord = "escape", .mode = "figure", .name = "gesture_cancel" },
+        .{ .chord = "C-g", .mode = "figure", .name = "gesture_cancel" },
         .{ .chord = "S-1", .mode = "figure", .name = "view_fit" },
         .{ .chord = "home", .mode = "figure", .name = "view_fit" },
         .{ .chord = "S-2", .mode = "figure", .name = "view_selection" },
@@ -3001,9 +3116,9 @@ test "every default key of the figure editor is bound in figure" {
         .{ .chord = "C-minus", .mode = "figure", .name = "zoom_out" },
         .{ .chord = "C-apostrophe", .mode = "figure", .name = "toggle_grid" },
         .{ .chord = "C-semicolon", .mode = "figure", .name = "toggle_bones" },
-        .{ .chord = "C-s", .mode = "figure", .name = "save" },
-        .{ .chord = "C-S-s", .mode = "figure", .name = "save_as" },
-        .{ .chord = "C-w", .mode = "figure", .name = "close" },
+        .{ .chord = "C-x C-s", .mode = "figure", .name = "save" },
+        .{ .chord = "C-x C-w", .mode = "figure", .name = "save_as" },
+        .{ .chord = "C-x k", .mode = "global", .name = "kill_buffer" },
         .{ .chord = "tab", .mode = "figure", .name = "focus_mode" },
         .{ .chord = "f6", .mode = "figure", .name = "key_panel_next" },
         .{ .chord = "1", .mode = "figure", .name = "mode_design" },
@@ -3033,7 +3148,6 @@ test "typing in a filter binds no key but global's" {
     try mesha_runtime.actions.ensure(scratch, &atoms, &tables);
     try plugin.Keymaps.ensure(scratch, &atoms, &tables, plugin.action_api.keymaps_table_name);
     try plugin.Actions.ensure(scratch, &atoms, &tables, plugin.action_api.subscribed_table_name);
-    const modes = @import("modes.zig");
     modes.registerAll(&tables);
     try mesha_runtime.actions.route(&memory, &atoms, &tables);
     const registry = tables.findByName(Atom.from(plugin.action_api.mode_registry_table)).?;
@@ -3066,7 +3180,7 @@ test "typing in a filter binds no key but global's" {
 }
 
 test "every Emacs key of the text editor is bound in a text panel" {
-    try expectKeysBound(@import("modes.zig").buffer, &.{
+    try expectKeysBound(modes.buffer, &.{
         .{ .chord = "C-f", .mode = "text", .name = "char_right" },
         .{ .chord = "right", .mode = "text", .name = "char_right" },
         .{ .chord = "S-right", .mode = "text", .name = "char_right_extend" },
@@ -3142,7 +3256,7 @@ test "every Emacs key of the text editor is bound in a text panel" {
         .{ .chord = "M-g g", .mode = "buffer", .name = "goto_line" },
         .{ .chord = "M-g M-g", .mode = "buffer", .name = "goto_line" },
         .{ .chord = "C-x C-w", .mode = "buffer", .name = "save_as" },
-        .{ .chord = "C-x k", .mode = "buffer", .name = "close" },
+        .{ .chord = "C-x k", .mode = "global", .name = "kill_buffer" },
         .{ .chord = "C-x C-f", .mode = "global", .name = "find_file" },
         .{ .chord = "C-x b", .mode = "global", .name = "switch_buffer" },
         .{ .chord = "M-period", .mode = "buffer", .name = "goto_definition" },
@@ -3315,11 +3429,11 @@ const table_window_keys = [_]ExpectedKey{
 };
 
 test "every key of a browsed table window is bound in table" {
-    try expectKeysBound(@import("modes.zig").table, &table_window_keys);
+    try expectKeysBound(modes.table, &table_window_keys);
 }
 
 test "a cell's Org keys are bound in table_cell" {
-    try expectKeysBound(@import("modes.zig").table_cell, &.{
+    try expectKeysBound(modes.table_cell, &.{
         .{ .chord = "M-a", .mode = "text", .name = "line_begin" },
         .{ .chord = "M-e", .mode = "text", .name = "line_end" },
         .{ .chord = "C-c SPC", .mode = "table_cell", .name = "clear" },
@@ -3332,18 +3446,16 @@ test "a mode a plugin registers under buffer has cua over it, as the editor's te
     try resolved.setUp();
     defer resolved.deinit();
     const zig_mode = resolved.atoms.intern("zig");
-    plugin.action_api.registerMode(&resolved.tables, zig_mode, @import("modes.zig").buffer);
+    plugin.action_api.registerMode(&resolved.tables, zig_mode, modes.buffer);
     try mesha_runtime.actions.route(&resolved.memory, &resolved.atoms, &resolved.tables);
     const registry = resolved.tables.findByName(Atom.from(plugin.action_api.mode_registry_table)).?;
-    const modes = @import("modes.zig");
     const zig_modes = modes.modesFor(zig_mode, .cua, registry);
     try std.testing.expectEqualSlices(Atom, &.{modes.cua}, zig_modes.minorSlice());
     const filter_modes = modes.modesFor(modes.filter, .cua, registry);
     try std.testing.expectEqual(@as(u8, 0), filter_modes.minor_count);
 }
 
-test "in a figure panel, figure's keys hide these of global's chords" {
-    const modes = @import("modes.zig");
+test "in a figure panel with Emacs's keys, figure's keys hide none of global's chords" {
     var global: ResolvedKeys = .{};
     try global.init(.{});
     defer global.deinit();
@@ -3364,27 +3476,8 @@ test "in a figure panel, figure's keys hide these of global's chords" {
         const kept = if (in_figure) |id| std.mem.eql(Atom, &id, &in_global) else false;
         if (!kept) try hidden.print("{s}\n", .{chord_text});
     }
-    // `figure`'s `C-x` (cut) hides every `C-x …` chord of `global`; `C-tab`, `C-S-w`, `f11` and
-    // `M-x` remain (`plans/keybind-modes-renames.md`, "Keys that changed").
-    const expected =
-        \\C-x 0
-        \\C-x o
-        \\C-x b
-        \\C-x C-b
-        \\C-x C-f
-        \\C-x 1
-        \\C-x p p
-        \\C-x p f
-        \\C-x p g
-        \\C-x p d
-        \\C-x p b
-        \\C-x p c
-        \\C-x p S-d
-        \\C-x g
-        \\C-x v p
-        \\
-    ;
-    try std.testing.expectEqualStrings(expected, hidden.buffered());
+    // `figure`'s modifier keys are Emacs's editing keys and its own `C-c` chords.
+    try std.testing.expectEqualStrings("", hidden.buffered());
 }
 
 /// `chord` as Emacs writes it, keys apart by spaces, in `buffer`.
@@ -3399,9 +3492,54 @@ fn formatChordText(buffer: []u8, chord: plugin.action_api.Chord) []const u8 {
     return writer.buffered();
 }
 
+test "a figure panel answers the text editor's keys: Emacs's, with global's C-x chords, or the common ones" {
+    var emacs: ResolvedKeys = .{};
+    try emacs.initFor(modes.figure, .emacs);
+    defer emacs.deinit();
+    for ([_]ExpectedKey{
+        .{ .chord = "C-x 0", .mode = "global", .name = "window_close" },
+        .{ .chord = "C-x b", .mode = "global", .name = "switch_buffer" },
+        .{ .chord = "C-x C-f", .mode = "global", .name = "find_file" },
+        .{ .chord = "C-w", .mode = "figure", .name = "cut" },
+        .{ .chord = "M-w", .mode = "figure", .name = "copy" },
+        .{ .chord = "C-y", .mode = "figure", .name = "paste" },
+        .{ .chord = "C-/", .mode = "figure", .name = "undo" },
+        .{ .chord = "C-x u", .mode = "figure", .name = "undo" },
+        .{ .chord = "C-g", .mode = "figure", .name = "gesture_cancel" },
+        .{ .chord = "C-x C-s", .mode = "figure", .name = "save" },
+    }) |key| try emacs.expectBound(key);
+    // `C-c` is the figure's own prefix, as it is a mode's in Emacs.
+    try std.testing.expect(emacs.boundTo("C-c") == null);
+    const emacs_warned = emacs.tables.findByName(Atom.from(plugin.action_api.warned_table_name)).?;
+    try std.testing.expectEqual(@as(usize, 0), emacs_warned.count());
+
+    var cua: ResolvedKeys = .{};
+    try cua.initFor(modes.figure, .cua);
+    defer cua.deinit();
+    for ([_]ExpectedKey{
+        .{ .chord = "C-c", .mode = "figure", .name = "copy" },
+        .{ .chord = "C-x", .mode = "figure", .name = "cut" },
+        .{ .chord = "C-v", .mode = "figure", .name = "paste" },
+        .{ .chord = "C-z", .mode = "figure", .name = "undo" },
+        .{ .chord = "C-y", .mode = "figure", .name = "redo" },
+        .{ .chord = "C-a", .mode = "figure", .name = "select_all" },
+        .{ .chord = "C-g", .mode = "figure", .name = "folder_group" },
+        .{ .chord = "C-s", .mode = "figure", .name = "save" },
+        .{ .chord = "C-S-w", .mode = "global", .name = "window_close" },
+    }) |key| try cua.expectBound(key);
+    // As in a text panel with the common keys, `C-x` is cut, which hides `global`'s chords
+    // that begin with it, and Emacs's editing keys are unbound.
+    for ([_][]const u8{ "C-x 0", "C-w", "M-w", "C-/", "C-c C-g" }) |chord| {
+        if (cua.boundTo(chord)) |bound| std.debug.print("bound: {s} -> {s}\n", .{ chord, cua.atoms.lookup(bound[1]) orelse "?" });
+        try std.testing.expect(cua.boundTo(chord) == null);
+    }
+    const cua_warned = cua.tables.findByName(Atom.from(plugin.action_api.warned_table_name)).?;
+    try std.testing.expectEqual(@as(usize, 0), cua_warned.count());
+}
+
 test "in a browsed table Org's C-c chords are bound and C-c alone is not" {
     var resolved: ResolvedKeys = .{};
-    try resolved.init(.{ .major = @import("modes.zig").table });
+    try resolved.init(.{ .major = modes.table });
     defer resolved.deinit();
     try resolved.expectBound(.{ .chord = "C-c SPC", .mode = "table", .name = "clear_cell" });
     try resolved.expectBound(.{ .chord = "C-c C-c", .mode = "table", .name = "toggle" });
@@ -3425,9 +3563,9 @@ const ResolvedKeys = struct {
     atoms: Atom.Registry = undefined,
     tables: Table.Registry = undefined,
 
-    fn init(self: *ResolvedKeys, modes: plugin.action_api.Modes) !void {
+    fn init(self: *ResolvedKeys, wanted_modes: plugin.action_api.Modes) !void {
         try self.setUp();
-        try self.resolve(modes);
+        try self.resolve(wanted_modes);
     }
 
     /// `init` with the modes a panel of `major` has while the text editors answer `keymap`
@@ -3435,8 +3573,8 @@ const ResolvedKeys = struct {
     fn initFor(self: *ResolvedKeys, major: Atom, keymap: text_editor.Keymap) !void {
         try self.setUp();
         const registry = self.tables.findByName(Atom.from(plugin.action_api.mode_registry_table)).?;
-        const modes = @import("modes.zig").modesFor(major, keymap, registry);
-        try self.resolve(modes);
+        const wanted_modes = modes.modesFor(major, keymap, registry);
+        try self.resolve(wanted_modes);
     }
 
     /// The tables, the editor's modes registered and its keymaps declared.
@@ -3451,7 +3589,7 @@ const ResolvedKeys = struct {
         try mesha_runtime.actions.ensure(scratch, &self.atoms, &self.tables);
         try plugin.Keymaps.ensure(scratch, &self.atoms, &self.tables, plugin.action_api.keymaps_table_name);
         try plugin.Actions.ensure(scratch, &self.atoms, &self.tables, plugin.action_api.subscribed_table_name);
-        @import("modes.zig").registerAll(&self.tables);
+        modes.registerAll(&self.tables);
         try mesha_runtime.actions.route(&self.memory, &self.atoms, &self.tables);
         var keymap_rows: plugin.KeymapRows = .{ .keymaps = plugin.Keymaps.of(&self.memory, &self.tables, plugin.action_api.keymaps_table_name) };
         var keymap_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
@@ -3460,8 +3598,8 @@ const ResolvedKeys = struct {
     }
 
     /// `actions_bindings` as the actions system writes it for `modes`.
-    fn resolve(self: *ResolvedKeys, modes: plugin.action_api.Modes) !void {
-        plugin.action_api.requestModes(&self.tables, modes);
+    fn resolve(self: *ResolvedKeys, wanted_modes: plugin.action_api.Modes) !void {
+        plugin.action_api.requestModes(&self.tables, wanted_modes);
         try mesha_runtime.actions.route(&self.memory, &self.atoms, &self.tables);
         try mesha_runtime.actions.collectKeys(&self.memory, &self.atoms, &self.tables);
     }
@@ -3582,7 +3720,6 @@ const cua_left_alone = [_]ExpectedKey{
 };
 
 test "a text panel with the common keys has each of them and no other of Emacs's" {
-    const modes = @import("modes.zig");
     var resolved: ResolvedKeys = .{};
     try resolved.initFor(modes.buffer, .cua);
     defer resolved.deinit();
@@ -3604,7 +3741,6 @@ test "a text panel with the common keys has each of them and no other of Emacs's
 }
 
 test "a prompt and a cell keep their own keys with the common keys" {
-    const modes = @import("modes.zig");
     var prompt: ResolvedKeys = .{};
     try prompt.initFor(modes.prompt, .cua);
     defer prompt.deinit();
@@ -3638,10 +3774,10 @@ test "keyed global actions remain available in App while widget actions are gate
     var rows = try actionRows(&fx);
     const action_subs = rows.actions;
 
-    // In App, the actions offered are those a default keymap binds, and the workspaces'.
+    // In App, the actions offered are those a default keymap binds, and those that show panels.
     state.setViewFocus(&fx.tables, &fx.atoms, fx.atoms.intern("stage"));
     lib.pushEditorActions(&fx.tables, &fx.atoms, rows.sink());
-    for ([_][]const u8{ "action_palette_toggle", "picker_toggle", "window_close", "maximize_toggle", "workspace_app", "workspace_figure", "workspace_reset_layout", "show_world" }) |name| {
+    for ([_][]const u8{ "action_palette_toggle", "picker_toggle", "window_close", "maximize_toggle", "panels_show_hidden" }) |name| {
         try std.testing.expect(actionById(action_subs, &fx.atoms, "global", name) != null);
     }
     // No widget's `cancel` is offered: only vcs-git's commit message buffer's and vcs-p4's
@@ -3649,7 +3785,7 @@ test "keyed global actions remain available in App while widget actions are gate
     var cancels = action_subs.iterate();
     while (cancels.next()) |action| {
         if (action.id[1] != fx.atoms.intern("cancel")) continue;
-        const buffer_mode = action.id[0] == @import("modes.zig").vcs_message or action.id[0] == @import("modes.zig").vcs_p4_message;
+        const buffer_mode = action.id[0] == modes.vcs_message or action.id[0] == modes.vcs_p4_message;
         try std.testing.expect(buffer_mode);
     }
     try std.testing.expect(actionByName(action_subs, &fx.atoms, "row_add") == null);
@@ -3737,7 +3873,6 @@ test "ctx_add acts on the focused window's table (row when no drawer is open)" {
 }
 
 test "menu UI rail glyph bounds are centred at the packed size" {
-    const button = @import("ui/button.zig");
     const data = try std.Io.Dir.cwd().readFileAlloc(std.testing.io, "editor/assets/fonts/RobotoMonoNerdFontMono-Regular.ttf", std.testing.allocator, .limited(8 * 1024 * 1024));
     defer std.testing.allocator.free(data);
     const atlas = try mesha_runtime.font.bakeListedToRgba(std.testing.allocator, data, mesha.font.kRailIconPixelHeight, &mesha.font.rail_icon_codepoints);
@@ -3763,7 +3898,6 @@ test "menu UI rail glyph bounds are centred at the packed size" {
 }
 
 test "menu UI icon catalog matches baked codepoints and icon-only routing" {
-    const button = @import("ui/button.zig");
     const resource = mesha.resources;
     const icon_values = std.enums.values(button.icons.Icon);
     try std.testing.expectEqual(resource.font.icon_codepoints.len + 5, icon_values.len);
@@ -3780,12 +3914,11 @@ test "menu UI icon catalog matches baked codepoints and icon-only routing" {
     try fx.init(std.testing.allocator);
     defer fx.deinit();
     var tree = try ui.Tree.init(try fx.mem.frameScratchAllocator(), &fx.atoms, 64);
-    const payload = editor_sequencer.to(&tree, @import("figure/workspace.zig").system(), fx.atoms.intern("figure_tool_pen"), {});
+    const payload = editor_sequencer.to(&tree, figure_workspace.system(), fx.atoms.intern("figure_tool_pen"), {});
     button.render(&tree, "pen", payload, .{ .variant = .icon_only, .icon = .pen, .selected = true, .tooltip = "Pen · p" });
     const rect = tree.elements[0].open_rect;
     try std.testing.expectEqual(@as(f32, 40), rect.size.w.fixed);
     try std.testing.expectEqual(@as(f32, 40), rect.size.h.fixed);
-    const style = @import("ui/style.zig");
     try std.testing.expect(std.meta.eql(style.col.accent_deep, rect.bg.?));
     try std.testing.expect(rect.border == null);
     try std.testing.expectEqual(payload, rect.on_click.?);
@@ -3846,7 +3979,7 @@ test "status bar shows the hovered element's tooltip unless the palette asks for
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     fx.resetCommands();
-    const a = @import("figure/view.zig").canvas_hover_id;
+    const a = figure_view.canvas_hover_id;
     const b: ui.ElementId = .{ .atom = fx.atoms.intern("hover.b"), .extra = 0 };
     // What an element says is its hit region's: the bar reads it there.
     var region_schema: Table.Schema = undefined;
@@ -3889,10 +4022,8 @@ test "action palette figure prompt capture survives busy admission and acknowled
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     fx.resetCommands();
-    // The figure editor's prompts are asked in its workspace, while it watches the open figure.
-    workspaces.arrangeNow(&fx.tables, &fx.atoms, .figure);
-    const prompts = @import("figure/prompts.zig");
-    const session = @import("figure/session.zig");
+    // The figure editor's prompts are asked with its stage shown, while it watches the open figure.
+    fixed_panels.layOutNow(&fx.tables, &fx.atoms, .figure_stage);
     const editor = session.get(&fx.tables);
     const figure = mesha_runtime.figure;
     const context = session.figureContext(&fx.tables, &fx.atoms);
@@ -3906,10 +4037,10 @@ test "action palette figure prompt capture survives busy admission and acknowled
     editor.doc.* = doc;
     try transport_fixture.synchronize(&fx.mem, &fx.atoms, &fx.tables);
     const bone = fx.atoms.intern("bone");
-    try prompts.showTarget(&fx.mem, &fx.tables, &fx.atoms, @import("figure/names.zig").rename, "original", bone, object_id);
+    try prompts.showTarget(&fx.mem, &fx.tables, &fx.atoms, names_mod.rename, "original", bone, object_id);
     try dispatchEditorCommands(&fx);
     const request = action_palette.currentCompletions(&fx.tables, &fx.atoms).?;
-    try std.testing.expectError(error.PromptBusy, prompts.showTarget(&fx.mem, &fx.tables, &fx.atoms, @import("figure/names.zig").new, "replacement", bone, 9));
+    try std.testing.expectError(error.PromptBusy, prompts.showTarget(&fx.mem, &fx.tables, &fx.atoms, names_mod.new, "replacement", bone, 9));
     try std.testing.expectEqual(object_id, editor.prompt_id.*);
     const original_text = session.promptText(&fx.tables);
     try std.testing.expectEqualStrings("original", original_text);
@@ -3918,17 +4049,17 @@ test "action palette figure prompt capture survives busy admission and acknowled
 
     action_palette.request(&fx.mem, &fx.tables, .{ .cancel = .{ .owner = prompts.owner } });
     try dispatchEditorCommands(&fx);
-    try std.testing.expectError(error.PromptBusy, prompts.showTarget(&fx.mem, &fx.tables, &fx.atoms, @import("figure/names.zig").new, "replacement", bone, 9));
+    try std.testing.expectError(error.PromptBusy, prompts.showTarget(&fx.mem, &fx.tables, &fx.atoms, names_mod.new, "replacement", bone, 9));
     const completion = popEditorMessage(&fx);
     try editorMessage(&fx, completion);
     try runPalette(&fx);
     try std.testing.expect(action_palette.canPresent(&fx.tables, &fx.atoms));
-    try prompts.showTarget(&fx.mem, &fx.tables, &fx.atoms, @import("figure/names.zig").new, "replacement", bone, 9);
+    try prompts.showTarget(&fx.mem, &fx.tables, &fx.atoms, names_mod.new, "replacement", bone, 9);
     try std.testing.expectEqual(@as(u32, 9), editor.prompt_id.*);
     try runPalette(&fx);
 
     // An answer to the earlier prompt still in flight does not act on this one.
-    const late = try paletteEvent(&fx, .from(@import("figure/workspace.zig").Msg.figure_prompt_reply), .{ .kind = .completed, .completion = null, .query = "earlier answer" });
+    const late = try paletteEvent(&fx, .from(figure_workspace.Msg.figure_prompt_reply), .{ .kind = .completed, .completion = null, .query = "earlier answer" });
     try std.testing.expect(prompts.handleMessage(&fx.mem, &fx.tables, &fx.atoms, late));
     try std.testing.expectEqualStrings("replacement", session.promptText(&fx.tables));
     try std.testing.expectEqual(fx.atoms.intern("new"), editor.prompt_kind.*);
@@ -3940,13 +4071,9 @@ test "action palette selected shape property keeps mixed target isolated and jou
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     fx.resetCommands();
-    // The figure editor's prompts are asked in its workspace, while it watches the open figure.
-    workspaces.arrangeNow(&fx.tables, &fx.atoms, .figure);
+    // The figure editor's prompts are asked with its stage shown, while it watches the open figure.
+    fixed_panels.layOutNow(&fx.tables, &fx.atoms, .figure_stage);
     const figure = mesha_runtime.figure;
-    const session = @import("figure/session.zig");
-    const prompts = @import("figure/prompts.zig");
-    const drawing = @import("figure/drawing.zig");
-    const selection = @import("figure/selection.zig");
     const domain = mesha_runtime.figure.domain;
     const context = session.figureContext(&fx.tables, &fx.atoms);
     try figure.init(context);
@@ -4001,7 +4128,7 @@ test "action palette selected shape property keeps mixed target isolated and jou
     try submitPromptText(&fx, "7");
     try dispatchWithFigure(&fx, &figure_commands);
     const result = (try transport_fixture.nextResult(&fx.tables)).?;
-    const consumed = @import("figure/commands.zig").consume(context, result);
+    const consumed = commands_mod.consume(context, result);
     try std.testing.expect(consumed);
     const changed = try session.readDefinition(&fx.tables, &fx.atoms, doc);
     const changed_primary = session.findById(plugin.figure_api.read.Shape, changed.shapes, primary).?;
@@ -4032,17 +4159,13 @@ test "action palette creation appearance defaults stay separate from selected ar
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     fx.resetCommands();
-    // The figure editor's prompts are asked in its workspace, while it watches the open figure.
-    workspaces.arrangeNow(&fx.tables, &fx.atoms, .figure);
+    // The figure editor's prompts are asked with its stage shown, while it watches the open figure.
+    fixed_panels.layOutNow(&fx.tables, &fx.atoms, .figure_stage);
     const figure = mesha_runtime.figure;
-    const session = @import("figure/session.zig");
-    const prompts = @import("figure/prompts.zig");
-    const drawing = @import("figure/drawing.zig");
     const domain = mesha_runtime.figure.domain;
     const context = session.figureContext(&fx.tables, &fx.atoms);
     try figure.init(context);
     defer figure.deinit(context) catch unreachable;
-    const selection = @import("figure/selection.zig");
     const doc = fx.atoms.intern("creation_defaults");
     try domain.library.create(&fx.tables, &fx.atoms, .{ .scope = mesha.resources.applicationScope(fx.tables.memory), .doc = doc });
     const shape = (try domain.command.apply(&fx.atoms, &fx.tables, .{ .add_shape = .{
@@ -4120,8 +4243,6 @@ test "action palette drawing options prefill validate retry cancel and isolate o
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     fx.resetCommands();
-    const prompts = @import("figure/prompts.zig");
-    const drawing = @import("figure/drawing.zig");
     const settings = drawing.config(&fx.tables);
     const options = std.enums.values(drawing.ToolOption);
     var before: [options.len]f32 = undefined;
@@ -4142,7 +4263,6 @@ test "action palette drawing options prefill validate retry cancel and isolate o
         try std.testing.expectEqual(value, actual);
     }
     try submitPromptText(&fx, "2.5");
-    const session = @import("figure/session.zig");
     const status = session.statusText(&fx.tables);
     try std.testing.expectEqualStrings("", status);
     for (options, before) |option, value| {
@@ -4173,8 +4293,6 @@ test "action palette Weight brush fields validate independently and cancel witho
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     fx.resetCommands();
-    const prompts = @import("figure/prompts.zig");
-    const weight = @import("figure/weight.zig");
     const settings = weight.config(&fx.tables);
     try prompts.showWeightOption(&fx.mem, &fx.tables, &fx.atoms, .radius);
     try dispatchEditorCommands(&fx);
@@ -4219,7 +4337,6 @@ test "action palette Weight brush fields validate independently and cancel witho
 }
 
 test "menu UI icon text selects sparse atlas while retaining legacy text glyphs" {
-    const button = @import("ui/button.zig");
     var fx: Fixture = .{};
     try fx.init(std.testing.allocator);
     defer fx.deinit();
@@ -4290,7 +4407,6 @@ test "the inspector's actions run as its system: panel commands, and the add-wid
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     fx.resetCommands();
-    const inspector = @import("inspector.zig");
     try systemAction(&fx, inspector.system(), fx.atoms.intern("maximize_toggle"));
     try std.testing.expectEqual(@as(usize, 1), panelRequestCount(&fx.tables));
     try std.testing.expect(panelRequestAt(&fx.tables, 0).? == .toggle_maximize);
@@ -4500,9 +4616,9 @@ test "a modal waiting for a cancel to settle builds nothing" {
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     fx.resetCommands();
     const route = testReply(fx.atoms.intern("test_reply"));
-    const open = action_palette.Completions{ .owner = fx.atoms.intern("cancelled"), .presentation = .prompt, .entries = &.{} };
-    action_palette.request(&fx.mem, &fx.tables, .{ .present = .{ .completions = &open, .reply = route } });
-    action_palette.request(&fx.mem, &fx.tables, .{ .cancel = .{ .owner = open.owner } });
+    const cancelled = action_palette.Completions{ .owner = fx.atoms.intern("cancelled"), .presentation = .prompt, .entries = &.{} };
+    action_palette.request(&fx.mem, &fx.tables, .{ .present = .{ .completions = &cancelled, .reply = route } });
+    action_palette.request(&fx.mem, &fx.tables, .{ .cancel = .{ .owner = cancelled.owner } });
     try runPalette(&fx);
     try std.testing.expect(!action_palette.canPresent(&fx.tables, &fx.atoms));
 
@@ -4643,7 +4759,6 @@ test "a picked path that is not a figure or a log opens as text" {
     try fx.init(std.testing.allocator);
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
-    const open = @import("open.zig");
     const scratch = try fx.mem.tableScratchAllocator();
     try sequencer_mod.ensureInboxes(scratch, &fx.atoms, &fx.tables, &.{ .name = "open_test", .steps = &.{.{ .system = open.system() }} });
     fx.resetCommands();
@@ -4665,7 +4780,6 @@ test "a figure outside every index opens by its path" {
     try fx.init(std.testing.allocator);
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
-    const open = @import("open.zig");
     const scratch = try fx.mem.tableScratchAllocator();
     try sequencer_mod.ensureInboxes(scratch, &fx.atoms, &fx.tables, &.{ .name = "open_test", .steps = &.{.{ .system = open.system() }} });
     fx.resetCommands();
@@ -4709,7 +4823,6 @@ test "a table file under a plugin opens in a table window, and one elsewhere is 
     try fx.init(std.testing.allocator);
     defer fx.deinit();
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
-    const open = @import("open.zig");
     const resources = mesha.resources;
     const plugins = plugin.plugins;
     const text_editor_api = plugin.text_editor_api;
@@ -4792,7 +4905,6 @@ test "the figure editor interns the id of a file it is asked to open, and an emp
     try lib.init(&fx.mem, &fx.atoms, &fx.tables);
     try mesha.panels.ensure(try fx.mem.tableScratchAllocator(), &fx.atoms, &fx.tables);
     try figure.Requests.ensure(try fx.mem.tableScratchAllocator(), &fx.atoms, &fx.tables, figure.commands_table_name);
-    const open = @import("open.zig");
     const scratch = try fx.mem.tableScratchAllocator();
     try sequencer_mod.ensureInboxes(scratch, &fx.atoms, &fx.tables, &.{ .name = "open_test", .steps = &.{.{ .system = open.system() }} });
     fx.resetCommands();
@@ -4832,7 +4944,6 @@ fn initFigureOpening(fx: *Fixture) !void {
     // Where the figure editor's requests go, which the figure host system makes.
     try figure.Requests.ensure(try fx.mem.tableScratchAllocator(), &fx.atoms, &fx.tables, figure.commands_table_name);
     try transport_fixture.synchronize(&fx.mem, &fx.atoms, &fx.tables);
-    const open = @import("open.zig");
     const scratch = try fx.mem.tableScratchAllocator();
     try sequencer_mod.ensureInboxes(scratch, &fx.atoms, &fx.tables, &.{ .name = "open_test", .steps = &.{.{ .system = open.system() }} });
     fx.resetCommands();
@@ -4857,7 +4968,6 @@ test "figure.open asks find-file, and the path chosen loads by path" {
     try figure_runtime.init(context);
     defer figure_runtime.deinit(context) catch unreachable;
     try initFigureOpening(&fx);
-    const open = @import("open.zig");
     const open_inbox = sequencer_mod.inboxOf(open.system());
 
     // With no figure shown, find-file opens on the working directory.
@@ -4889,7 +4999,6 @@ test "figure.open asks find-file, and the path chosen loads by path" {
 /// `listed_directory` holding `entries`; and chooses the text as typed. The open system and the
 /// figure canvas then take what was chosen.
 fn chooseTypedPath(fx: *Fixture, working_directory: []const u8, typed: []const u8, typed_directory: []const u8, listed_directory: []const u8, entries: []const plugin.text_editor_api.ListedEntry) !void {
-    const open = @import("open.zig");
     const open_inbox = sequencer_mod.inboxOf(open.system());
     try editorAction(fx, .{ .tag = Atom.from("figure_open") });
     const opened = try findFileListingAsked(fx, "");
@@ -4994,7 +5103,7 @@ test "a path typed in find-file whose name a loaded figure has makes nothing and
     try chooseTypedPath(&fx, "/x", "/x/blue.mshf", "/x/", "/x", &.{});
     // Neither a new document nor a save of the loaded one: the person is told why.
     try std.testing.expectEqual(@as(u32, 0), figure.Requests.of(&fx.mem, &fx.tables, figure.commands_table_name).count());
-    try std.testing.expectEqualStrings("No figure was made at /x/blue.mshf: a figure or sketch named blue is already open or saved.", @import("figure/session.zig").statusText(&fx.tables));
+    try std.testing.expectEqualStrings("No figure was made at /x/blue.mshf: a figure or sketch named blue is already open or saved.", session.statusText(&fx.tables));
 }
 
 test "figure.switch_document lists the loaded figures" {

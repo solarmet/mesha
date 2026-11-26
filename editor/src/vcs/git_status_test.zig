@@ -22,7 +22,7 @@ const editor_sequencer = @import("../editor_sequencer.zig");
 const action_palette = @import("../action_palette.zig");
 const open = @import("../open.zig");
 const transient = @import("../transient.zig");
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const git = @import("git.zig");
 const runner = @import("runner.zig");
 const vcs_page = @import("page.zig");
@@ -69,7 +69,7 @@ pub const Bench = struct {
         try process.ensureTables(scratch, &bench.atoms, &bench.tables);
         try runner.ensure(scratch, &bench.atoms, &bench.tables);
         try git_status.ensure(scratch, &bench.atoms, &bench.tables);
-        try workspaces.ensure(scratch, &bench.atoms, &bench.tables);
+        try fixed_panels.ensure(scratch, &bench.atoms, &bench.tables);
         try open.ensure(scratch, &bench.atoms, &bench.tables);
         try mesha.panels.ensure(scratch, &bench.atoms, &bench.tables);
         try plugin.panels.Requests.ensure(scratch, &bench.atoms, &bench.tables, plugin.panels.commands_table_name);
@@ -600,7 +600,7 @@ test "vcs git status: opening vcs-git runs status and recent, and no diff" {
     try bench.init();
     defer bench.deinit();
     try bench.act(.vcs_git_status);
-    try testing.expect(workspaces.panelShown(&bench.tables, git_status.panel));
+    try testing.expect(fixed_panels.panelShown(&bench.tables, git_status.panel));
 
     // The first refresh for a project: status and recent, the operation in progress and the
     // repository's root, run together in the working directory, with git's variables.
@@ -774,7 +774,7 @@ test "vcs git status: the project menu's v shows vcs-git, and in no repository h
     const asked = actions_requests.peek(&sent);
     try testing.expectEqual(@as(usize, 1), asked.len);
     try testing.expectEqual(Atom.from("vcs_p4_status"), asked[0].invoke[1]);
-    try testing.expect(!workspaces.panelShown(&bench.tables, git_status.panel));
+    try testing.expect(!fixed_panels.panelShown(&bench.tables, git_status.panel));
     // `C-x g` in no repository shows its one line and hands over nothing.
     actions_requests.reset();
     bench.forgetRequests();
@@ -782,7 +782,7 @@ test "vcs git status: the project menu's v shows vcs-git, and in no repository h
     for (bench.queued(&storage)) |job| _ = try bench.finish(job, 128, "", not_here);
     bench.run();
     try testing.expectEqual(@as(usize, 0), actions_requests.peek(&sent).len);
-    try testing.expect(workspaces.panelShown(&bench.tables, git_status.panel));
+    try testing.expect(fixed_panels.panelShown(&bench.tables, git_status.panel));
 }
 
 test "vcs git status: answers whose jobs the runner let go end the refresh" {
@@ -1203,7 +1203,7 @@ test "vcs git status: RET on a file's row shows it in the diff panel, on a commi
     const diff = bench.queued(&storage);
     try testing.expectEqual(@as(usize, 1), diff.len);
     try expectArgv(diff[0], .{ .diff = .staged });
-    try testing.expect(workspaces.panelShown(&bench.tables, @import("git_diff.zig").panel));
+    try testing.expect(fixed_panels.panelShown(&bench.tables, @import("git_diff.zig").panel));
     bench.forgetRequests();
     try bench.actOn(.recent, "72f25b6", .vcs_git_visit);
     const show = bench.queued(&storage);

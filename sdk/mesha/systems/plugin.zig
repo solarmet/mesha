@@ -87,16 +87,17 @@ pub const app_commands = struct {
 /// lets a plugin go when its row is removed, when resources releases the tables of its scope and
 /// the resources read from its directory (`resources.CmdPayload.release_plugin`). A row whose
 /// directory holds a `build.zig` has a build of its own while it is there (the watch system's),
-/// and loads only once that build has succeeded in this run: the host never loads a library an
-/// earlier run left there.
+/// run as the row is added and again whenever the builds are asked for (`Build`), and loads
+/// only once that build has succeeded in this run: the host never loads a library an earlier
+/// run left there. Each row says when its library last loaded and how many times it has.
 ///
 /// Plugins run latest loaded first, so one that builds on another subscribes before it.
 ///
-/// Systems ask the host to load a plugin directory, write a new stage plugin and load it, or
-/// unload a plugin with rows of `commands.plugins`, which the host applies after the frame's run,
-/// when no plugin's code is running, and answers with an `Answer`. Nothing is kept between
-/// runs: a plugin loaded by request is loaded for this run, and a plugin that wants another loaded
-/// at every start asks for it from its own code.
+/// Systems ask the host to load a plugin directory, write a new stage plugin and load it, unload
+/// a plugin, or build them all again with rows of `commands.plugins`, which the host applies
+/// after the frame's run, when no plugin's code is running, and answers with an `Answer`.
+/// Nothing is kept between runs: a plugin loaded by request is loaded for this run, and a plugin
+/// that wants another loaded at every start asks for it from its own code.
 pub const plugins = struct {
     /// `plugins`, a row per plugin; see `Row`.
     pub const table_name = "plugins";
@@ -129,8 +130,14 @@ pub const plugins = struct {
     /// name a loaded plugin has, or a directory there that holds anything. `reply` is answered
     /// with an `Answer`.
     pub const Create = struct { parent: []const u8, name: []const u8, reply: sequencer.ReplyTo = .{} };
+    /// Runs every plugin's build again (`mesha.watch`): a build whose program runs is run once
+    /// more when it ends, so what is built is the source as it is now. Each library a build
+    /// installs is reloaded as it lands. `reply` is answered with an `Answer` (no name) as soon
+    /// as the builds are asked for, `building` or `builds_off`; how each build went is its
+    /// plugins' rows of `watch_plugins`.
+    pub const Build = struct { reply: sequencer.ReplyTo = .{} };
     /// A request to the host about plugins, a row of `commands.plugins`.
-    pub const CmdPayload = union(enum) { load: Load, unload: Unload, create: Create };
+    pub const CmdPayload = union(enum) { load: Load, unload: Unload, create: Create, build: Build };
     /// `commands.plugins`, the requests the host applies after the frame's run.
     pub const commands_table_name = "commands.plugins";
     /// The typed handle on `commands.plugins`.
@@ -171,8 +178,10 @@ pub const plugins = struct {
         exists,
         /// A create found no SDK for the plugin to build on.
         no_sdk,
-        /// A create was asked while builds are off, so the plugin would never be built.
+        /// A create or a build was asked while builds are off, so nothing would be built.
         builds_off,
+        /// The builds were asked for: each runs, or runs again once it ends.
+        building,
         /// A create could not write the plugin's files; what it wrote stays.
         write_failed,
         /// The plugin would be built, and `zig` 0.16.0 is not on `PATH`: nothing was added or
@@ -219,6 +228,16 @@ pub const plugins = struct {
         state: *u8,
         /// An `Origin`.
         origin: *u8,
+        /// When its library last loaded, first or again after a rebuild: milliseconds since
+        /// 1970 in UTC, by the wall clock; 0 while it never has. The host's.
+        loaded_at: *i64,
+        /// The offset of the host's local time from UTC at `loaded_at`, in seconds, east
+        /// positive: what a reader adds to `loaded_at` to show the time of day there. The
+        /// host's.
+        loaded_utc_offset: *i32,
+        /// How many times its library has loaded in this run: 1 once it first loads, one more
+        /// with each reload. The host's.
+        loads: *u32,
     };
 
     /// What a row is added with.
@@ -237,13 +256,16 @@ pub const plugins = struct {
     /// the schema for the call. The host calls it.
     pub fn ensureTable(backing: std.mem.Allocator, atoms: *Atom.Registry, tables: *Table.Registry) !*Table {
         var schema: Table.Schema = undefined;
-        try schema.init(backing, atoms, 5);
+        try schema.init(backing, atoms, 8);
         defer schema.deinit();
         schema.addField("name", Atom, .atom);
         schema.addField("directory", Table.String, .text_field);
         schema.addField("library", Table.String, .text_field);
         schema.addField("state", u8, .int);
         schema.addField("origin", u8, .int);
+        schema.addField("loaded_at", i64, .int);
+        schema.addField("loaded_utc_offset", i32, .int);
+        schema.addField("loads", u32, .int);
         const initial_rows = 4;
         const ensured = try tables.ensure(&schema, initial_rows, atoms.intern(table_name), .durable);
         return ensured.table;
@@ -297,6 +319,9 @@ pub const plugins = struct {
             .library = row.library,
             .state = waiting,
             .origin = origin,
+            .loaded_at = @as(i64, 0),
+            .loaded_utc_offset = @as(i32, 0),
+            .loads = @as(u32, 0),
         });
     }
 };
@@ -414,6 +439,15 @@ pub const panels = struct {
     /// only panel open is focused either way.
     pub const FocusOnOpen = enum(u8) { take, keep };
 
+    /// Where the keyboard is while the focus is suspended (`disable_focus_clicks`).
+    pub const KeyboardPlace = enum(u8) {
+        /// In the panel that had the focus, as a field drawn in it.
+        focused_panel,
+        /// Outside the panels, as in the editor's minibuffer: the panel that had the focus
+        /// keeps its border, to show where the keyboard returns, but not its glow.
+        outside_panels,
+    };
+
     /// A request to the panels system, a row of `commands.panels`: a change to where the open
     /// panels are or which has the focus. Which panels are open is not asked for but declared
     /// (`declare`). A request that cannot be applied (a panel that is not open, a height out
@@ -421,7 +455,7 @@ pub const panels = struct {
     pub const CmdPayload = union(enum) {
         /// Closes every panel, so the window is laid out afresh: the panels still declared
         /// open again with the frame, in the order their systems run, each by its
-        /// declaration's placement. A workspace's owner asks for it as it arranges one.
+        /// declaration's placement.
         close_all,
         /// Docks an open panel to `side` of `beside`, or of the window with `beside` none.
         move: struct { id: Atom, beside: Atom = @enumFromInt(0), side: Side },
@@ -437,16 +471,19 @@ pub const panels = struct {
         /// Focuses the next panel in reading order, wrapping; nothing happens while a panel is
         /// maximized.
         focus_next,
-        /// Fills the window with the focused panel, or restores the arrangement.
+        /// Fills the whole window with the focused panel, the gap and the reserved bottom
+        /// included, or restores the arrangement. A maximized panel's owner draws it without
+        /// its header (`panels.isMaximized`).
         toggle_maximize,
         /// Ends `disable_focus_clicks`: a press focuses the panel under it, and the focused
         /// panel's owner takes local input.
         enable_focus_clicks,
         /// Suspends the focus, as for a modal prompt: a press focuses no panel and no panel
         /// counts as focused, so local input subscriptions fire whichever system they are of.
-        disable_focus_clicks,
-        /// Keeps `height` of the window's bottom free of panels, which share what is above it;
-        /// zero gives it back.
+        /// `keyboard` says where the keyboard went meanwhile.
+        disable_focus_clicks: struct { keyboard: KeyboardPlace = .focused_panel },
+        /// Keeps `height` of the window's bottom free of panels, which share what is above it,
+        /// while none is maximized: a maximized panel takes the whole window. Zero gives it back.
         reserve_bottom: struct { height: f32 },
         /// Hides the panel `id`: it closes, and stays closed while its system declares it,
         /// until `show`. For closing a panel that is another system's to declare, as an
@@ -457,6 +494,14 @@ pub const panels = struct {
         /// Ends `hide`: the panel opens again with the frame, by its declaration's placement,
         /// if its system still declares it.
         show: struct { id: Atom },
+        /// Puts the panel `by` in the place of the open panel `id`, which closes: `by` takes
+        /// `id`'s share of the space, its maximize and, when `id` had it, the focus, as a
+        /// file opened in a window replaces what the window showed. `by` is a panel declared
+        /// in the frame that asks, which then opens there instead of by its declaration's
+        /// placement, or one already open, which leaves its own place. `id`'s system stops
+        /// declaring it in that frame; one it still declares opens again by its placement.
+        /// Nothing happens when `id` is not open or `by` is neither declared nor open.
+        replace: struct { id: Atom, by: Atom },
     };
     /// Requests to the panels system, a row each, applied in order and cleared.
     pub const commands_table_name = "commands.panels";

@@ -936,7 +936,7 @@ test "document: only the sources a document names are declared and read" {
 }
 
 /// A stand-in measure: ten pixels a byte.
-fn tenPixelsAByte(context: *const anyopaque, font: Atom, text: []const u8) f32 {
+fn tenPixelsAByte(context: *const anyopaque, font: ui.Font, text: []const u8) f32 {
     _ = context;
     _ = font;
     return @floatFromInt(text.len * 10);

@@ -23,13 +23,16 @@ const memory_mod = mesha.memory;
 const panels_mod = mesha.panels;
 const panel_frame = @import("panel_frame.zig");
 const sequencer = mesha.sequencer;
-const Log = mesha.log.scope("text_panel");
 const action_palette = @import("action_palette.zig");
 const shared = @import("text_editor.zig");
 const style = @import("ui/style.zig");
-const workspaces = @import("workspaces.zig");
+const fixed_panels = @import("fixed_panels.zig");
+const figure_workspace = @import("figure/workspace.zig");
+const buffer_list = @import("buffer_list.zig");
 const open_mod = @import("open.zig");
 const modes = @import("modes.zig");
+const state_mod = @import("state.zig");
+const Log = mesha.log.scope("text_panel");
 
 const text_editor = plugin.text_editor_api;
 const lsp = plugin.lsp_api;
@@ -61,24 +64,21 @@ const panel_ids: [max_panels]Atom = blk: {
 };
 
 /// A size the text draws at: the font for ASCII, and the one that has the characters past
-/// ASCII it lacks. Every size is baked at init; ctrl+wheel steps a panel through them.
+/// ASCII it lacks. Each loads the first time a panel draws at its size; ctrl+wheel steps a
+/// panel through them.
 pub const TextSize = struct {
     pixel_height: f32,
-    font_name: []const u8,
-    extra_font_name: []const u8,
-    font: Atom,
-    extra_font: Atom,
+    font: resources.Font,
+    extra_font: resources.Font,
 };
 
+const mono_file = "fonts/RobotoMonoNerdFontMono-Regular.ttf";
+
 fn textSize(comptime pixel_height: comptime_int) TextSize {
-    const font_name = std.fmt.comptimePrint("mono_{d}", .{pixel_height});
-    const extra_font_name = font_name ++ "_extra";
     return .{
         .pixel_height = pixel_height,
-        .font_name = font_name,
-        .extra_font_name = extra_font_name,
-        .font = Atom.from(font_name),
-        .extra_font = Atom.from(extra_font_name),
+        .font = .init(.{ .plugin = "editor", .path = mono_file, .pixel_height = pixel_height }),
+        .extra_font = .init(.{ .plugin = "editor", .path = mono_file, .pixel_height = pixel_height, .glyph_codepoints = &extra_codepoints }),
     };
 }
 
@@ -126,7 +126,7 @@ const PanelRow = struct {
     panel: *Atom,
     buffer: *Atom,
     /// Whether the panels system has shown the panel since the row was made. A row whose
-    /// panel was shown and is gone was closed.
+    /// panel was shown and is gone was closed or replaced, and goes.
     shown: *u8,
     /// How far the text is scrolled, in pixels.
     scroll_x: *f32,
@@ -141,9 +141,7 @@ const PanelRow = struct {
     page_lines: *u32,
     /// Where the window opens, which the panels system reads as it first shows it: beside
     /// this panel (none: along the window's edge), on this `plugin.panels.Side`, taking the
-    /// focus or not (a `plugin.panels.FocusOnOpen`). Once the window has been shown they say
-    /// where it comes back after a change of workspace closed every panel: along the edge,
-    /// without the focus.
+    /// focus or not (a `plugin.panels.FocusOnOpen`).
     open_beside: *Atom,
     open_side: *u8,
     open_focus: *u8,
@@ -211,10 +209,6 @@ const PanelRow = struct {
     completion_start: *u32,
     /// Which of the completions listed is chosen, counted among those listed.
     completion_selected: *u32,
-    /// The text workspace's own window, which its arrangement opened on `*scratch*`: a change
-    /// of workspace closes it for good, as the stage closes with the app's. Switched to
-    /// another buffer, the window is the person's and follows every workspace as others do.
-    workspace_window: *u8,
 };
 
 /// How far a completion at the caret has got.
@@ -456,7 +450,7 @@ fn bufferMode(buffer_modes: *Table, buffer: Atom) Atom {
 
 pub fn ensure(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables: *Table.Registry) !void {
     try atoms.tryInternAll(&panel_names);
-    for (text_sizes) |size| try atoms.tryInternAll(&.{ size.font_name, size.extra_font_name });
+    for (text_sizes) |size| try atoms.tryInternAll(&.{ size.font.label, size.extra_font.label });
     var schema: Table.Schema = undefined;
     try schema.init(scratch.allocator, atoms, 44);
     defer schema.deinit();
@@ -502,7 +496,6 @@ pub fn ensure(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables: *Table
     try schema.addFieldFallible("completing", u8, .int);
     try schema.addFieldFallible("completion_start", u32, .int);
     try schema.addFieldFallible("completion_selected", u32, .int);
-    try schema.addFieldFallible("workspace_window", u8, .int);
     _ = try tables.ensure(&schema, max_panels, panels_table, .durable);
 
     try atoms.tryInternAll(&.{ jumps_table_name, navigation_table_name });
@@ -753,7 +746,7 @@ const declared_panels_table = Atom.from(plugin.panels.declared_table_name);
 fn cellOf(metrics: *Table, text_size: u8) ?Cell {
     const size_index = @min(text_size, text_sizes.len - 1);
     const font = text_sizes[size_index].font;
-    const measured = resources.fontMetrics(metrics, resources.kApplicationScope, font) orelse return null;
+    const measured = resources.fontMetrics(metrics, resources.kApplicationScope, font.name) orelse return null;
     if (measured.pixel_height <= 0 or measured.mono_advance <= 0) return null;
     return .{ .line_height = measured.pixel_height + line_spacing, .cell_width = measured.mono_advance };
 }
@@ -935,6 +928,9 @@ const Msg = enum(u64) {
     /// `BufferScope` its user data.
     text_switch_buffer = Atom.from("text_switch_buffer").value(),
     text_panel_switch = Atom.from("text_panel_switch").value(),
+    /// Asks which buffer to kill, the one shown first, and the palette's answer.
+    text_kill_buffer = Atom.from("text_kill_buffer").value(),
+    text_panel_kill = Atom.from("text_panel_kill").value(),
     /// Asks which of the buffers whose file lies under the working directory to show.
     text_project_switch_buffer = Atom.from("text_project_switch_buffer").value(),
     /// Kills the focused panel's buffer; the panel then shows another, or closes.
@@ -1030,7 +1026,11 @@ const window_close_tag = Atom.from("window_close");
 const toggle_keymap_action: plugin.action_api.Def = .{ .name = "toggle_keymap", .tag = @tagName(Msg.text_toggle_keymap), .doc = "Switch text editing between Emacs keys and common (Ctrl+C, Ctrl+V) keys" };
 
 /// Shows a buffer: in the focused text panel, or with none focused in a new one.
-const switch_buffer_action: plugin.action_api.Def = .{ .name = "switch_buffer", .tag = @tagName(Msg.text_switch_buffer), .doc = "Switch to another buffer: an open file, *scratch* or *Messages*" };
+const switch_buffer_action: plugin.action_api.Def = .{ .name = "switch_buffer", .tag = @tagName(Msg.text_switch_buffer), .doc = "Switch to another buffer: an open file, *scratch*, *Messages* or a figure" };
+
+/// Kills a buffer chosen from all of them, the one shown offered first: a text buffer, or a
+/// figure, which closes.
+const kill_buffer_action: plugin.action_api.Def = .{ .name = "kill_buffer", .tag = @tagName(Msg.text_kill_buffer), .doc = "Kill a buffer: an open file, *scratch* or a figure" };
 
 /// Shows one of the project's buffers, as `switch_buffer` shows any; its key, `C-x p b`, is
 /// `text_tools.global_keys`, with the other project commands'.
@@ -1039,13 +1039,14 @@ const project_switch_buffer_action: plugin.action_api.Def = .{ .name = "project_
 /// What the editor offers from anywhere: the keymap is a setting, not the panel's, and any
 /// buffer can be shown from anywhere. A focused text panel lists `switch_buffer`,
 /// `select_window` and `recent_files` itself, in place of the editor (`panelActionMode`).
-pub const actions = [_]plugin.action_api.Def{ toggle_keymap_action, switch_buffer_action, select_window_action, recent_files_action, project_switch_buffer_action };
+pub const actions = [_]plugin.action_api.Def{ toggle_keymap_action, switch_buffer_action, kill_buffer_action, select_window_action, recent_files_action, project_switch_buffer_action };
 
 /// The keys of `actions`, of the mode `global`.
 pub const global_keys = [_]mesha.keybinds.KeyDef{
     .{ .chord = "C-x o", .action = .{ "global", "select_window" } },
     .{ .chord = "C-x b", .action = .{ "global", "switch_buffer" } },
     .{ .chord = "C-x C-b", .action = .{ "global", "switch_buffer" } },
+    .{ .chord = "C-x k", .action = .{ "global", "kill_buffer" } },
 };
 
 /// Opens a file opened lately, from anywhere: the list outlasts the session.
@@ -1113,7 +1114,6 @@ pub const buffer_keys = [_]mesha.keybinds.KeyDef{
     .{ .chord = "M-g g", .action = .{ "buffer", "goto_line" } },
     .{ .chord = "M-g M-g", .action = .{ "buffer", "goto_line" } },
     .{ .chord = "C-x C-w", .action = .{ "buffer", "save_as" } },
-    .{ .chord = "C-x k", .action = .{ "buffer", "close" } },
     .{ .chord = "M-period", .action = .{ "buffer", "goto_definition" } },
     .{ .chord = "M-comma", .action = .{ "buffer", "go_back" } },
     .{ .chord = "C-h period", .action = .{ "buffer", "describe" } },
@@ -1352,8 +1352,7 @@ fn claims(tag: Atom) bool {
 /// Whether the panels have nothing to do this frame: no messages (which always run the
 /// system), no events from their buffers or language servers, and no panel opened, closed,
 /// resized, being dragged in, taking or losing the keyboard, or whose font has another cell
-/// than it scrolls by, and the text workspace's own window is not left in another workspace. Idle, the system keeps its
-/// subscriptions, so the panels still hear the pointer and typing.
+/// than it scrolls by. Idle, the system keeps its subscriptions, so the panels still hear the pointer and typing.
 fn idle(frame: *const sequencer.Frame) bool {
     const tables = frame.tables;
     const atoms = frame.atoms;
@@ -1362,24 +1361,20 @@ fn idle(frame: *const sequencer.Frame) bool {
     if (text_editor.Events.of(tables, text_editor.events_table_name).unread(reader, &text_events).len != 0) return false;
     var server_events: [1]lsp.Event = undefined;
     if (lsp.Events.of(tables, lsp.events_table_name).unread(reader, &server_events).len != 0) return false;
-    if (textWorkspaceEmpty(tables, atoms)) return false;
     if (showAsked(tables)) return false;
 
     const table = panelsTable(tables) orelse return true;
     const keyboard = focusedPanel(tables, atoms);
     const metrics = tables.findByName(font_metrics_table);
-    const in_text_workspace = workspaces.activeWorkspace(tables, atoms) == .text;
     var rows = table.readQuery(PanelRow);
     while (rows.next()) |found| {
         const row = found.view;
         if (row.dragging.* != 0) return false;
-        // The text workspace's own window goes with its row once another is active.
-        if (row.workspace_window.* != 0 and !in_text_workspace) return false;
         if (metrics) |measured| {
             if (cellChanged(measured, row)) return false;
         }
         const open = panels_mod.isOpen(tables, atoms, row.panel.*);
-        // Shown for the first time, or gone and to be opened again.
+        // Shown for the first time, or replaced, and its row to go.
         if (open != (row.shown.* != 0)) return false;
         if (!open) continue;
         const has_keyboard = keyboard != null and keyboard.? == row.panel.*;
@@ -1433,13 +1428,19 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
     result.read(Atom.from(os.places_table_name));
     // Which view had the focus before a prompt took the keyboard: the window a buffer
     // chosen there shows in.
-    result.read(Atom.from(@import("state.zig").view_focus_name));
+    result.read(Atom.from(state_mod.view_focus_name));
     // And what its buffer's language server says of it.
     lsp.Events.declare(&result, tables, lsp.events_table_name);
     lsp.declareReading(&result, tables);
     result.writeIfPresent(tables, Atom.from(lsp.commands_table_name));
-    // The text workspace's window shows `*scratch*`, whose state tells whether it is there.
-    text_editor.declareBuffer(&result, tables, text_editor.scratch_buffer);
+    // A buffer shown from the focused figure stage takes its place, closing it.
+    result.writeIfPresent(tables, Atom.from(fixed_panels.shown_panels_table_name));
+    result.writeIfPresent(tables, Atom.from(figure_workspace.commands_table_name));
+    // The buffers listed to switch to or kill, figures among them, the focused window's
+    // buffer the latest visited, and the figure the stage shows.
+    buffer_list.declareVisits(&result, tables);
+    buffer_list.declareListing(&result, tables);
+    if (tables.findByName(Atom.from(figure_workspace.session.name)) != null) result.read(Atom.from(figure_workspace.session.name));
     const table = panelsTable(tables) orelse return result;
     var rows = table.readQuery(PanelRow);
     while (rows.next()) |found| text_editor.declareBuffer(&result, tables, found.view.buffer.*);
@@ -1747,7 +1748,7 @@ fn handle(frame: *const sequencer.Frame, table: *Table, working_directory: []con
         .text_close => {
             const panel = focusedPanel(tables, atoms) orelse return;
             const found = rowOfPanel(table, panel) orelse return;
-            killBuffer(tables, found.row);
+            killBuffer(tables, found.row.buffer.*);
         },
         .text_string_rectangle => {
             const panel = focusedPanel(tables, atoms) orelse return;
@@ -1947,11 +1948,12 @@ fn handle(frame: *const sequencer.Frame, table: *Table, working_directory: []con
             text_editor.request(frame.memory, tables, .{ .run = .{ .buffer = buffer, .command = .push_mark } });
             text_editor.request(frame.memory, tables, .{ .set_caret = .{ .buffer = buffer, .line = place.line, .column = place.column, .select = .motion } });
         },
-        .text_switch_buffer => presentBuffers(tables, working_directory, "", .open, .all),
-        .text_project_switch_buffer => presentBuffers(tables, working_directory, "", .open, .project),
+        .text_switch_buffer => presentBuffers(tables, atoms, working_directory, "", .open, .all, .switch_to),
+        .text_project_switch_buffer => presentBuffers(tables, atoms, working_directory, "", .open, .project, .switch_to),
+        .text_kill_buffer => presentBuffers(tables, atoms, working_directory, "", .open, .all, .kill),
         .text_switch_buffer_other_window => {
             if (navigationRow(tables)) |navigation| navigation.other_window.* = 1;
-            presentBuffers(tables, working_directory, "", .open, .all);
+            presentBuffers(tables, atoms, working_directory, "", .open, .all, .switch_to);
         },
         .text_find_file_other_window => {
             if (navigationRow(tables)) |navigation| navigation.other_window.* = 1;
@@ -2017,16 +2019,38 @@ fn handle(frame: *const sequencer.Frame, table: *Table, working_directory: []con
             if (event.kind == .query_changed) {
                 const scope_byte = (try received.userDataAs(u8)).*;
                 const scope = std.enums.fromInt(BufferScope, scope_byte) orelse .all;
-                return presentBuffers(tables, working_directory, event.query, .narrow, scope);
+                return presentBuffers(tables, atoms, working_directory, event.query, .narrow, scope, .switch_to);
             }
             action_palette.request(frame.memory, tables, .{ .acknowledge = .{ .owner = prompt_owner } });
             // Given up, what was to show in another window shows nowhere.
             if (event.completion == null) {
                 if (navigationRow(tables)) |navigation| navigation.other_window.* = 0;
             }
-            const chosen = event.completion orelse return;
-            const buffer = std.mem.bytesToValue(Atom, chosen.data[0..@sizeOf(Atom)]);
-            showAsWished(tables, atoms, table, buffer);
+            const completion = event.completion orelse return;
+            const chosen = buffer_list.Chosen.decode(&completion.data);
+            switch (chosen.kind) {
+                .text => showAsWished(tables, atoms, table, chosen.id),
+                .figure, .sketch => {
+                    // The figure stage shows it in the focused window's place, as a buffer
+                    // shows in the focused text window: never in another.
+                    if (navigationRow(tables)) |navigation| navigation.other_window.* = 0;
+                    const wanted: figure_workspace.Request = if (chosen.kind == .figure) .{ .show_document = chosen.id } else .{ .show_sketch = chosen.id };
+                    figure_workspace.request(frame.memory, tables, wanted);
+                },
+            }
+        },
+        .text_panel_kill => {
+            const event = try action_palette.eventOf(received);
+            if (event.kind == .query_changed) return presentBuffers(tables, atoms, working_directory, event.query, .narrow, .all, .kill);
+            action_palette.request(frame.memory, tables, .{ .acknowledge = .{ .owner = prompt_owner } });
+            const completion = event.completion orelse return;
+            const chosen = buffer_list.Chosen.decode(&completion.data);
+            switch (chosen.kind) {
+                .text => killBuffer(tables, chosen.id),
+                .figure => figure_workspace.request(frame.memory, tables, .{ .close_document = chosen.id }),
+                // Not offered: a sketch closes with its figures.
+                .sketch => {},
+            }
         },
         _ => {},
     }
@@ -3053,40 +3077,84 @@ fn bufferLabel(entry: Table.ReadView(BufferEntry)) []const u8 {
 /// whose file lies under the working directory, the project's.
 const BufferScope = enum(u8) { all, project };
 
-/// Asks, in the palette, which buffer the focused panel is to show: every buffer of `scope`
-/// whose label holds `query`, in either case, a file's labelled by `open_mod.shown`. `prompt`
-/// says whether the prompt opens or is open and has new text to narrow by. The entry chosen
-/// carries its buffer in its data.
-fn presentBuffers(tables: *Table.Registry, working_directory: []const u8, query: []const u8, prompt: EncodingPrompt, scope: BufferScope) void {
+/// What the list of buffers is asked for.
+const BufferPurpose = enum {
+    /// To show one: the buffer shown now is offered last, so the one before it comes first.
+    switch_to,
+    /// To kill one: the buffer shown now is offered first. Sketches, which close with their
+    /// figures, are not offered.
+    kill,
+};
+
+/// The buffer the focused view shows: a text window's buffer, or the figure the figure stage
+/// shows while one of the figure editor's panels has the focus; null for any other view.
+fn currentBuffer(tables: *Table.Registry, atoms: *Atom.Registry) ?buffer_list.Chosen {
+    const focused = state_mod.viewFocus(tables, atoms).id.*;
+    if (isPanel(focused)) {
+        const table = panelsTable(tables) orelse return null;
+        const found = rowOfPanel(table, focused) orelse return null;
+        return .{ .kind = .text, .id = found.row.buffer.* };
+    }
+    const figure_shown = figure_workspace.isFigureView(focused) and figure_workspace.stageShown(tables);
+    if (!figure_shown) return null;
+    const doc = figure_workspace.session.get(tables).doc.*;
+    if (doc == no_atom) return null;
+    return .{ .kind = .figure, .id = doc };
+}
+
+/// Asks, in the palette, which buffer to show or kill (`purpose`): every buffer of `scope`
+/// whose label holds `query`, in either case, the latest visited first (`buffer_list`). A
+/// text buffer's file is labelled by `open_mod.shown`, a figure or a sketch by its name and
+/// its kind beside it. `prompt` says whether the prompt opens or is open and has new text to
+/// narrow by. The entry chosen carries a `buffer_list.Chosen` in its data.
+fn presentBuffers(tables: *Table.Registry, atoms: *Atom.Registry, working_directory: []const u8, query: []const u8, prompt: EncodingPrompt, scope: BufferScope, purpose: BufferPurpose) void {
     const memory = tables.memory;
-    const entries = tables.findByName(Atom.from(text_editor.buffers_table_name)) orelse return;
     const allocator = action_palette.completionAllocator(memory, .text_panel) catch return;
     // While narrowing the arena is not reset: the prompt may still read the entries it shows.
     if (prompt == .open) action_palette.resetCompletionArena(memory, .text_panel);
-    const listed = allocator.alloc(action_palette.Completion, text_editor.max_buffers) catch return;
+    const entries = buffer_list.collect(allocator, tables, atoms) catch return;
+    const current = currentBuffer(tables, atoms);
+    const listed = allocator.alloc(action_palette.Completion, entries.len) catch return;
     var count: usize = 0;
-    var rows = entries.readQuery(BufferEntry);
-    while (rows.next()) |found| {
-        const entry = found.view;
-        const whole_label = bufferLabel(entry);
-        if (whole_label.len == 0 or count == listed.len) continue;
+    var shown_now: ?action_palette.Completion = null;
+    for (entries) |entry| {
+        if (purpose == .kill and entry.kind == .sketch) continue;
         const in_scope = switch (scope) {
             .all => true,
             .project => entry.path.len != 0 and open_mod.partUnder(entry.path, working_directory) != null,
         };
         if (!in_scope) continue;
-        const label = if (entry.path.len != 0) open_mod.shown(entry.path, working_directory) else whole_label;
+        const text_file = entry.kind == .text and entry.path.len != 0;
+        const label = if (text_file) open_mod.shown(entry.path, working_directory) else entry.name;
         if (std.ascii.indexOfIgnoreCase(label, query) == null) continue;
-        var data = std.mem.zeroes([action_palette.kCompletionDataSize]u8);
-        @memcpy(data[0..@sizeOf(Atom)], std.mem.asBytes(entry.buffer));
-        listed[count] = .{ .label = label, .data = data };
+        const detail: []const u8 = switch (entry.kind) {
+            .text => "",
+            .figure => if (entry.modified) "Figure, modified" else "Figure",
+            .sketch => if (entry.modified) "Sketch, modified" else "Sketch",
+        };
+        const chosen: buffer_list.Chosen = .{ .kind = entry.kind, .id = entry.id };
+        const completion: action_palette.Completion = .{ .label = label, .detail = detail, .data = chosen.encode() };
+        const is_current = if (current) |shown| shown.kind == chosen.kind and shown.id == chosen.id else false;
+        if (is_current and purpose == .switch_to) {
+            shown_now = completion;
+            continue;
+        }
+        listed[count] = completion;
         count += 1;
     }
+    if (shown_now) |completion| {
+        listed[count] = completion;
+        count += 1;
+    }
+    const title = switch (purpose) {
+        .kill => "Kill buffer",
+        .switch_to => if (scope == .project) "Switch to the project's buffer" else "Switch to buffer",
+    };
     const completions = allocator.create(action_palette.Completions) catch return;
     completions.* = .{
         .owner = prompt_owner,
         .presentation = .prompt,
-        .title = if (scope == .project) "Switch to the project's buffer" else "Switch to buffer",
+        .title = title,
         .initial_query = query,
         .entries = listed[0..count],
     };
@@ -3095,8 +3163,9 @@ fn presentBuffers(tables: *Table.Registry, working_directory: []const u8, query:
         action_palette.request(memory, tables, .{ .replace = .{ .completions = completions } });
         return;
     }
+    const answer: Msg = if (purpose == .kill) .text_panel_kill else .text_panel_switch;
     const scope_byte: u8 = @intFromEnum(scope);
-    const reply = sequencer.ReplyTo.of(system(), .from(Msg.text_panel_switch)).with(.of(&scope_byte));
+    const reply = sequencer.ReplyTo.of(system(), .from(answer)).with(.of(&scope_byte));
     action_palette.request(memory, tables, .{ .present = .{ .completions = completions, .reply = reply } });
 }
 
@@ -3317,10 +3386,9 @@ fn onSaved(tables: *Table.Registry, row: PanelRow, result: text_editor.SaveResul
 
 const CloseChoice = enum(u8) { save, discard, cancel };
 
-/// Closes the panel's buffer; a modified file's asks first. The panel then shows another buffer,
-/// or closes when no other is hidden (`followBuffers`).
-fn killBuffer(tables: *Table.Registry, row: PanelRow) void {
-    const buffer = row.buffer.*;
+/// Closes `buffer`; a modified file's asks first. A panel that showed it then shows another
+/// buffer, or closes when no other is hidden (`followBuffers`).
+fn killBuffer(tables: *Table.Registry, buffer: Atom) void {
     const state = text_editor.rowOf(tables, buffer) orelse return;
     // Only a file's changes are asked about: a buffer that holds none, as `*scratch*`, goes
     // as it is, as Emacs kills one.
@@ -3753,8 +3821,6 @@ fn retarget(table: *Table, found: anytype, buffer: Atom) void {
     row.history_shown.* = 0;
     row.jump.* = @intFromEnum(Jump.none);
     row.completing.* = @intFromEnum(Completing.none);
-    // Showing another buffer, the text workspace's window becomes the person's.
-    row.workspace_window.* = 0;
     if (row.info.len != 0) table.setString(found.handle, "info", "") catch |err| Log.err("text_panel_row_failed", .{ .@"error" = @errorName(err) });
 }
 
@@ -3803,7 +3869,6 @@ fn insertRow(table: *Table, panel: Atom, buffer: Atom) !void {
         .completing = @intFromEnum(Completing.none),
         .completion_start = @as(u32, 0),
         .completion_selected = @as(u32, 0),
-        .workspace_window = @as(u8, 0),
     });
 }
 
@@ -3859,7 +3924,7 @@ fn placeBuffer(tables: *Table.Registry, atoms: *Atom.Registry, table: *Table, bu
         return .{ .panel = panel, .previous = no_atom, .already = true };
     }
     // The editor's own record of the focused view, which the prompt that asked did not take.
-    const focused = @import("state.zig").viewFocus(tables, atoms).id.*;
+    const focused = state_mod.viewFocus(tables, atoms).id.*;
     const target = if (in_other_window) otherWindow(table, focused) else if (isPanel(focused)) focused else null;
     if (target) |panel| {
         if (rowOfPanel(table, panel)) |found| {
@@ -3874,9 +3939,16 @@ fn placeBuffer(tables: *Table.Registry, atoms: *Atom.Registry, table: *Table, bu
         Log.err("text_panel_row_failed", .{ .@"error" = @errorName(err) });
         return null;
     };
-    // Beside the focused panel, which asked for it, taking the focus as it opens.
     const made = rowOfPanel(table, panel) orelse return null;
-    made.row.open_beside.* = workspaces.requester(tables, atoms);
+    // The figure stage is a document's window as a text window is: the buffer takes its place.
+    const stage = Atom.from(fixed_panels.figure_stage);
+    if (focused == stage and !in_other_window) {
+        fixed_panels.hidePanel(tables, stage);
+        plugin.panels.request(tables.memory, tables, .{ .replace = .{ .id = stage, .by = panel } });
+        return .{ .panel = panel, .previous = no_atom };
+    }
+    // Beside the focused panel, which asked for it, taking the focus as it opens.
+    made.row.open_beside.* = fixed_panels.requester(tables, atoms);
     return .{ .panel = panel, .previous = no_atom };
 }
 
@@ -3905,51 +3977,6 @@ fn splitWindow(tables: *Table.Registry, table: *Table, source: PanelRow, side: p
     made.row.open_beside.* = source_panel;
     made.row.open_side.* = @intFromEnum(side);
     made.row.open_focus.* = @intFromEnum(plugin.panels.FocusOnOpen.keep);
-}
-
-/// Whether the text workspace is active and shows no panel but fixed ones (the profiler,
-/// vcs-git): at start, after the last window closed, and when a fixed panel opens alone in it,
-/// as vcs-git does when it switches to it. Its arrangement, a window on `*scratch*`, is this
-/// system's to open, beside them.
-fn textWorkspaceEmpty(tables: *Table.Registry, atoms: *Atom.Registry) bool {
-    if (workspaces.activeWorkspace(tables, atoms) != .text) return false;
-    var open_buffer: [panels_mod.kMaxPanels]Atom = undefined;
-    const open_panels = panels_mod.load(tables, atoms).panelIds(&open_buffer);
-    for (open_panels) |id| {
-        if (!workspaces.isFixedPanel(id)) return false;
-    }
-    return true;
-}
-
-/// Makes the text workspace's own window on `*scratch*`, marked as its own, unless it has
-/// one, which is declared and opens with the frame. A `*scratch*` closed is asked for again,
-/// and shown once its buffer is there, a frame later: the window is never left empty.
-fn arrangeTextWorkspace(tables: *Table.Registry, table: *Table) void {
-    if (workspaceWindow(table) != null) return;
-    if (text_editor.rowOf(tables, text_editor.scratch_buffer) == null) {
-        text_editor.request(tables.memory, tables, .{ .create = .{ .buffer = text_editor.scratch_buffer, .lines = .multi, .name = text_editor.scratch_name } });
-        return;
-    }
-    const panel = freePanel(table) orelse return;
-    insertRow(table, panel, text_editor.scratch_buffer) catch |err| {
-        Log.err("text_panel_row_failed", .{ .@"error" = @errorName(err) });
-        return;
-    };
-    const made = rowOfPanel(table, panel) orelse return;
-    made.row.workspace_window.* = 1;
-    // Another plugin's panel may open in the same frame, a game's as it loads: the window
-    // then goes to its left and leaves it the focus. Alone, it has the window and the focus.
-    made.row.open_side.* = @intFromEnum(plugin.panels.Side.left);
-    made.row.open_focus.* = @intFromEnum(plugin.panels.FocusOnOpen.keep);
-}
-
-/// The text workspace's own window, if it has one.
-fn workspaceWindow(table: *Table) ?PanelRow {
-    var rows = table.query(PanelRow);
-    while (rows.next()) |found| {
-        if (found.view.workspace_window.* != 0) return found.view;
-    }
-    return null;
 }
 
 /// Whether a buffer is asked to show and not shown yet: the panels' run shows it once it is
@@ -4095,12 +4122,10 @@ fn followBuffers(pass: *sequencer.Pass) !void {
     const taken = try shared.readEvents(pass, Atom.from(system().name), &events);
     try forgetClosedBufferModes(pass, taken);
     const observed = panelsTable(tables) orelse return;
-    const text_empty = textWorkspaceEmpty(tables, atoms);
     const asked = showAsked(tables);
-    if (observed.count() == 0 and !text_empty and !asked) return forgetClosedRequests(pass, taken);
+    if (observed.count() == 0 and !asked) return forgetClosedRequests(pass, taken);
 
     const table = try pass.writeTable(panels_table);
-    if (text_empty) arrangeTextWorkspace(tables, table);
     for (taken) |event| switch (event) {
         .changed => |change| {
             var showing = table.query(PanelRow);
@@ -4162,33 +4187,22 @@ fn followBuffers(pass: *sequencer.Pass) !void {
     try takeShowRequests(pass, table);
     settleWindows(tables, atoms, table);
 
-    // The text workspace's own window stays with that workspace, as the stage stays with the
-    // app's: in another its row goes, and with it the window. Every other window is declared
-    // in any workspace, so one that a change of workspace closed opens again.
-    const in_text_workspace = workspaces.activeWorkspace(tables, atoms) == .text;
+    // A window shown that is no longer open was replaced, as the figure stage takes a
+    // window's place: its row goes, so it is not declared and opened again.
     var dropped: [panel_ids.len]Table.RowHandle = undefined;
     var dropped_count: usize = 0;
     var rows = table.query(PanelRow);
     while (rows.next()) |found| {
         const row = found.view;
-        if (row.workspace_window.* != 0 and !in_text_workspace) {
-            if (dropped_count < dropped.len) {
+        if (!panels_mod.isOpen(tables, atoms, row.panel.*)) {
+            const replaced = row.shown.* != 0;
+            if (replaced and dropped_count < dropped.len) {
                 dropped[dropped_count] = found.handle;
                 dropped_count += 1;
             }
             continue;
         }
-        if (!panels_mod.isOpen(tables, atoms, row.panel.*)) {
-            if (row.shown.* != 0) row.shown.* = 0;
-            continue;
-        }
-        if (row.shown.* == 0) {
-            row.shown.* = 1;
-            // Shown where it was asked for: from here on it comes back along the edge.
-            row.open_beside.* = no_atom;
-            row.open_side.* = @intFromEnum(plugin.panels.Side.right);
-            row.open_focus.* = @intFromEnum(plugin.panels.FocusOnOpen.keep);
-        }
+        if (row.shown.* == 0) row.shown.* = 1;
         const page_lines = pageLines(tables, atoms, row) orelse continue;
         if (row.page_lines.* == page_lines) continue;
         row.page_lines.* = page_lines;
@@ -4197,6 +4211,10 @@ fn followBuffers(pass: *sequencer.Pass) !void {
         text_editor.request(frame.memory, tables, .{ .set_layout = .{ .buffer = row.buffer.*, .page_lines = page_lines, .tab_width = tab_width } });
     }
     for (dropped[0..dropped_count]) |dropped_handle| table.free(dropped_handle);
+    // The buffer of the window with the keyboard is the latest visited.
+    if (focusedPanel(tables, atoms)) |panel| {
+        if (rowOfPanel(table, panel)) |found| buffer_list.visit(tables, .text, found.row.buffer.*);
+    }
 }
 
 /// Declares every window open, a panel each, as the panels system follows them: a window
@@ -4310,7 +4328,7 @@ fn appendInput(pass: *sequencer.Pass, subscription: input.Subscription, message:
 /// over it or not.
 pub fn listsActions(tables: *Table.Registry, atoms: *Atom.Registry) bool {
     // The editor's own record of the focused view, which a prompt does not take.
-    const focused = @import("state.zig").viewFocus(tables, atoms).id.*;
+    const focused = state_mod.viewFocus(tables, atoms).id.*;
     return isPanel(focused);
 }
 
@@ -4513,9 +4531,14 @@ pub fn render(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *Atom.
     const size_index = @min(row.text_size.*, text_sizes.len - 1);
     const size = text_sizes[size_index];
     // The cell `followMetrics` keeps, which the kernels scroll by: zero until the font is in.
+    // Nothing else draws in the font before then, so asking here is what loads it; its metrics
+    // arriving change the cell, which draws the panel again.
     const line_height = row.line_height.*;
     const cell_width = row.cell_width.*;
-    if (line_height <= 0 or cell_width <= 0) return;
+    if (line_height <= 0 or cell_width <= 0) {
+        _ = ctx.fontView(size.font);
+        return;
+    }
 
     // What is tinted behind the text in sight: a search's matches.
     const line_count = view.lineCount();
@@ -4797,8 +4820,8 @@ const Drawing = struct {
     anchor: u32,
     focused: bool,
     /// The fonts of the panel's size: see `TextSize`.
-    font: Atom,
-    extra_font: Atom,
+    font: resources.Font,
+    extra_font: resources.Font,
     line_height: f32,
     cell_width: f32,
     /// From a line's top: the capitals sit in the middle of the line.
@@ -4898,8 +4921,8 @@ const Drawing = struct {
                 position += 1;
             } else {
                 const length = @min(codepointLength(byte), end - position);
-                drawing.drawWide(position, length, column, top, baseline, colours.colour);
-                column += 1;
+                const cells = drawing.drawWide(position, length, column, top, baseline, colours.colour);
+                column += cells;
                 position += length;
             }
             run_start = position;
@@ -5008,26 +5031,48 @@ const Drawing = struct {
         }
     }
 
-    /// Draws one character past ASCII in its cell: from the extra font when it has the
-    /// character, as a box when no font has.
-    fn drawWide(drawing: *const Drawing, start: u32, length: u32, column: u32, top: f32, baseline: f32, colour: roop.Color) void {
+    /// Draws one character past ASCII in its cells, and returns how many it takes
+    /// (`text_editor.buffer_mod.cellsOf`): from the extra font or the fallback fonts behind it
+    /// when one has the character, centred in its cells, as a box when none has.
+    fn drawWide(drawing: *const Drawing, start: u32, length: u32, column: u32, top: f32, baseline: f32, colour: roop.Color) u32 {
         const ctx = drawing.ctx;
         var bytes: [4]u8 = undefined;
         const character = drawing.view.copyRange(start, bytes[0..length]);
+        const codepoint = std.unicode.utf8Decode(character) catch std.unicode.replacement_character;
+        const cells = text_editor.buffer_mod.cellsOf(codepoint);
         const x = drawing.xOf(column);
-        const has_glyph = ctx.measureText(drawing.extra_font, character).w > 0;
-        if (has_glyph) {
+        const cells_width = @as(f32, @floatFromInt(cells)) * drawing.cell_width;
+        const advance = ctx.measureText(drawing.extra_font, character).w;
+        if (advance > 0) {
             ctx.fontFace(drawing.extra_font);
             ctx.fillColor(colour);
-            _ = ctx.text(x, baseline, character);
-            return;
+            // A fallback glyph is drawn at the font's em and may be wider or narrower than its
+            // cells: a narrower one is centred in them, a wider one squeezed into them, so it
+            // never covers its neighbours. A glyph of the font's own fills them already.
+            if (advance <= cells_width) {
+                const centred = x + (cells_width - advance) / 2;
+                _ = ctx.text(centred, baseline, character);
+                return cells;
+            }
+            // Composed in the panel's coordinates: squeeze about the glyph's origin, then place
+            // it, then the panel's own transform.
+            ctx.save();
+            defer ctx.restore();
+            const transform = roop.transform;
+            const squeeze = transform.scaling(cells_width / advance, 1);
+            const placed = transform.multiply(transform.translation(x, baseline), squeeze);
+            const panel = ctx.currentTransform();
+            ctx.setTransform(transform.multiply(panel, placed));
+            _ = ctx.text(0, 0, character);
+            return cells;
         }
         const inset: f32 = 2;
         ctx.beginPath();
-        ctx.rect(x + inset, top + inset, drawing.cell_width - 2 * inset, drawing.line_height - 2 * inset);
+        ctx.rect(x + inset, top + inset, cells_width - 2 * inset, drawing.line_height - 2 * inset);
         ctx.strokeWidth(1);
         ctx.strokeColor(style.col.text_disabled);
         ctx.stroke();
+        return cells;
     }
 };
 

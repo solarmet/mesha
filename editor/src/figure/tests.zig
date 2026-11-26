@@ -614,6 +614,7 @@ test "drawing selected gradient properties identify paint and retain it during f
     const sequencer_mod = mesha.sequencer;
     try sequencer_mod.ensure(scratch, &f.atoms, &f.tables);
     const palette_alone: sequencer_mod.Sequencer = .{ .name = "palette_test", .steps = &.{.{ .system = action_palette.system() }} };
+    try sequencer_mod.ensureInboxes(scratch, &f.atoms, &f.tables, &palette_alone);
     @import("../editor_sequencer.zig").run(&f.mem, &f.atoms, &f.tables, &palette_alone, null);
     const request = action_palette.currentCompletions(&f.tables, &f.atoms).?;
     const labels_fallback = std.mem.indexOf(u8, request.prompt, "Fill fallback RGBA") != null;

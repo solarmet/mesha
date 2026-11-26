@@ -13,7 +13,7 @@ const sequencer = mesha.sequencer;
 const action_palette = @import("../action_palette.zig");
 const transient = @import("../transient.zig");
 const git_commit = @import("git_commit.zig");
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const style = @import("../ui/style.zig");
 const git = @import("git.zig");
 const runner = @import("runner.zig");
@@ -70,12 +70,12 @@ pub fn diffActOn(bench: *Bench, text: []const u8, tag: git_diff.Msg) !void {
 
 /// Whether the diff panel is shown.
 pub fn panelShown(bench: *Bench) bool {
-    return workspaces.panelShown(&bench.tables, git_diff.panel);
+    return fixed_panels.panelShown(&bench.tables, git_diff.panel);
 }
 
 /// The diff panel's title, as its row of `editor_shown_panels` holds it.
 pub fn panelTitle(bench: *Bench) []const u8 {
-    const shown = bench.tables.findByName(Atom.from(workspaces.shown_panels_table_name)).?;
+    const shown = bench.tables.findByName(Atom.from(fixed_panels.shown_panels_table_name)).?;
     var rows = shown.readQuery(struct { id: *Atom, title: []const u8 });
     while (rows.next()) |row| {
         if (row.view.id.* == git_diff.panel) return row.view.title;

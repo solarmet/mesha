@@ -16,6 +16,26 @@ const input = mesha.input;
 
 const System = sequencer.System;
 const Sequencer = sequencer.Sequencer;
+const table_authoring = @import("table_authoring.zig");
+const editor = @import("editor.zig");
+const text_editor = @import("text_editor.zig");
+const action_palette = @import("action_palette.zig");
+const stage = @import("stage.zig");
+const fixed_panels = @import("fixed_panels.zig");
+const status_bar = @import("status_bar.zig");
+const profiler = @import("profiler/profiler.zig");
+const inspector = @import("inspector.zig");
+const windows = @import("windows.zig");
+const text_panel = @import("text_panel.zig");
+const open = @import("open.zig");
+const runner = @import("vcs/runner.zig");
+const git_status = @import("vcs/git_status.zig");
+const p4_status = @import("vcs/p4_status.zig");
+const text_tools = @import("text_tools.zig");
+const plugins = @import("plugins.zig");
+const plugin_list = @import("plugin_list.zig");
+const transient = @import("transient.zig");
+const workspace = @import("figure/workspace.zig");
 const Log = log.scope("editor_sequencer");
 
 /// The editor's sequencer: its systems, and the figure editor's systems as a child sequencer,
@@ -31,44 +51,65 @@ const Log = log.scope("editor_sequencer");
 /// the editor takes its own messages. Last, the editor declares its actions and listens for
 /// the frame's final state. The fixed panels shown are declared after every system that may
 /// show or close one, the figure editor's among them. The figure editor's step runs `figure_authoring`'s steps.
-pub fn frameRoot(figure_authoring: *const FigureAuthoring) sequencer.Built(24) {
+pub fn frameRoot(figure_authoring: *const FigureAuthoring) sequencer.Built(26) {
     return .{ .name = "editor_frame", .steps = .{
-        .{ .system = @import("table_authoring.zig").system() },
-        .{ .system = @import("editor.zig").messagesSystem() },
-        .{ .system = @import("editor.zig").focusSystem() },
-        .{ .system = @import("text_editor.zig").clipboardSystem() },
-        .{ .system = @import("action_palette.zig").inputSystem() },
-        .{ .system = @import("stage.zig").system() },
-        .{ .system = @import("workspaces.zig").system() },
-        .{ .system = @import("status_bar.zig").system() },
-        .{ .system = @import("profiler/profiler.zig").system() },
-        .{ .system = @import("inspector.zig").system() },
-        .{ .system = @import("windows.zig").system() },
-        .{ .system = @import("text_panel.zig").system() },
-        .{ .system = @import("text_panel.zig").modesSystem() },
-        .{ .system = @import("open.zig").system() },
-        .{ .system = @import("vcs/runner.zig").system() },
-        .{ .system = @import("vcs/git_status.zig").system() },
-        .{ .system = @import("vcs/p4_status.zig").system() },
-        .{ .system = @import("text_tools.zig").system() },
-        .{ .system = @import("plugins.zig").system() },
+        .{ .system = table_authoring.system() },
+        .{ .system = editor.messagesSystem() },
+        .{ .system = editor.focusSystem() },
+        .{ .system = text_editor.clipboardSystem() },
+        .{ .system = action_palette.inputSystem() },
+        .{ .system = stage.system() },
+        .{ .system = fixed_panels.system() },
+        .{ .system = status_bar.system() },
+        .{ .system = profiler.system() },
+        .{ .system = inspector.system() },
+        .{ .system = windows.system() },
+        .{ .system = text_panel.system() },
+        .{ .system = text_panel.modesSystem() },
+        .{ .system = open.system() },
+        .{ .system = runner.system() },
+        .{ .system = git_status.system() },
+        .{ .system = p4_status.system() },
+        .{ .system = text_tools.system() },
+        .{ .system = plugins.system() },
+        .{ .system = plugin_list.system() },
         .{ .sequencer = figure_authoring.sequencer() },
-        .{ .system = @import("workspaces.zig").shownPanelsSystem() },
-        .{ .system = @import("transient.zig").system() },
-        .{ .system = @import("action_palette.zig").system() },
-        .{ .system = @import("editor.zig").subscriptionsSystem() },
+        .{ .system = fixed_panels.shownPanelsSystem() },
+        .{ .system = transient.system() },
+        .{ .system = action_palette.system() },
+        .{ .system = editor.subscriptionsSystem() },
+        .{ .system = redrawSystem() },
     } };
+}
+
+/// The system whose inbox every tree the editor draws names for its fonts (`ui.Tree.commit`):
+/// a font a tree drew before it loaded answers here once it has, and every panel draws again
+/// (`Context.finished`). It runs no kernel; a font loads once, so redrawing all is rare.
+pub fn redrawSystem() System {
+    return .{ .name = "editor_redraw", .root = redraw_root, .claims = sequencer.claims_nothing, .access = noAccess, .kernels = &.{} };
+}
+
+/// `redrawSystem`'s inbox, which every `ui.Tree.commit` of the editor's names.
+pub fn redrawInbox() Atom {
+    return sequencer.inboxOf(redrawSystem());
+}
+
+const redraw_root = Atom.from("editor_redraw");
+
+fn noAccess(frame: *const sequencer.Frame) sequencer.Access {
+    _ = frame;
+    return .{};
 }
 
 /// The figure editor's systems, which the frame's root runs as a child where they are: build
 /// them into a local first (`figure_workspace.figureAuthoring()`), and keep it while the
 /// root built from it is in use.
-pub const FigureAuthoring = @TypeOf(@import("figure/workspace.zig").figureAuthoring());
+pub const FigureAuthoring = @TypeOf(workspace.figureAuthoring());
 
 /// The sequencer's fault table and its systems' inboxes.
 pub fn ensure(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables: *Table.Registry) !void {
     try sequencer.ensure(scratch, atoms, tables);
-    const figure_authoring = @import("figure/workspace.zig").figureAuthoring();
+    const figure_authoring = workspace.figureAuthoring();
     const frame_root = frameRoot(&figure_authoring);
     try sequencer.ensureInboxes(scratch, atoms, tables, &frame_root.sequencer());
 }
@@ -88,12 +129,18 @@ const Context = struct {
         _ = system;
     }
 
-    /// The system's panels draw again when its kernels changed a table.
+    /// The system's panels draw again when its kernels changed a table or it heard something;
+    /// every panel does when a font the editor drew before it loaded has loaded
+    /// (`redrawSystem`).
     fn finished(context: *anyopaque, system: *const System, changed: bool) void {
         if (!changed) return;
         const self = of(context);
         // Without the panels, as in a headless run, there is nothing to draw.
         if (self.tables.findByName(Atom.from(panels_mod.nodes_table_name)) == null) return;
+        if (system.root == redraw_root) {
+            panels_mod.requestRedrawAll(self.tables, self.atoms);
+            return;
+        }
         var shown: [panels_mod.kMaxPanels]panels_mod.Panel = undefined;
         for (panels_mod.panels(self.tables, self.atoms, &shown)) |panel| {
             if (panel.root == system.root) panels_mod.requestRedraw(self.tables, self.atoms, panel.id);

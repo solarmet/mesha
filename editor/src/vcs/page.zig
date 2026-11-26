@@ -1,9 +1,9 @@
-//! A page of a version-control panel: a document (`editor/src/document/`) one of the panel's
-//! views shows, which its system's kernels lay out and move through and its draw draws. vcs-git
-//! owns three (its status, its log and its rebase list) and vcs-p4 two (its changelists and its
-//! history); each is named by a `Page`, and the helpers here take one, a kernel's over its pass
-//! and the draw's over the tables it reads, so every panel lays out, settles and draws its pages
-//! the one way.
+//! A page of a panel: a document (`editor/src/document/`) one of the panel's views shows, which
+//! its system's kernels lay out and move through and its draw draws. vcs-git owns three (its
+//! status, its log and its rebase list), vcs-p4 two (its changelists and its history) and the
+//! list of plugins one (`plugin_list.zig`); each is named by a `Page`, and the helpers here take
+//! one, a kernel's over its pass and the draw's over the tables it reads, so every panel lays
+//! out, settles and draws its pages the one way.
 
 const std = @import("std");
 const mesha = @import("mesha");

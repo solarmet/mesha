@@ -16,8 +16,6 @@
 //! (`TableAssetView` and the rest) read those tables' rows.
 const std = @import("std");
 const table_document_mod = @import("../core/table_document.zig");
-/// An interned name: a resource's, a document's id, a scope's.
-pub const Atom = @import("../core/atom.zig").Atom;
 const memory_mod = @import("../core/memory.zig");
 const Table = @import("../core/table.zig");
 const gfx = @import("gfx.zig");
@@ -25,6 +23,9 @@ const font_mod = @import("font.zig");
 const sequencer = @import("../core/sequencer.zig");
 const builtin = @import("builtin");
 const config_mod = @import("../core/config.zig");
+const atom = @import("../core/atom.zig");
+/// An interned name: a resource's, a document's id, a scope's.
+pub const Atom = atom.Atom;
 
 /// A parsed ZON document, as `load_config` answers with (`core/config.zig`).
 pub const Config = config_mod.Config;
@@ -352,6 +353,9 @@ pub const TableAssetError = enum(u32) { none, file_read, parse, invalid_id, dupl
 pub const ResourcePayload = struct {
     /// The file read: under the plugin's `assets/` when `plugin` names one.
     path: []const u8,
+    /// The file's bytes when the host built them in, as the engine's font's are: read in place
+    /// of `path`, which then only names them in logs. Static; empty for a file read from disk.
+    embedded: []const u8 = &.{},
     /// The plugin whose directory `path` is in, whose release (`release_plugin`) unloads the
     /// row; `no_plugin` for a path the request named outright.
     plugin: Atom = no_plugin,
@@ -359,6 +363,9 @@ pub const ResourcePayload = struct {
     baked_chars: font_mod.BakedChars,
     /// A font's codepoints and glyphs when it is baked by list; its count is 0 otherwise.
     listed_glyphs: font_mod.ListedGlyphs,
+    /// A font's em at the height it was baked, in pixels: the size its fallback glyphs are
+    /// drawn at (`FontView.Fallback.em_pixels`).
+    em_pixels: f32 = 0,
 };
 /// A resource row's `user_data` cell: unused, kept at its 64 bytes because the row schema
 /// (`validateTableState`) requires it.
@@ -732,9 +739,48 @@ pub const FontView = struct {
     listed_codepoints: []const u32 = &.{},
     /// The glyph of each listed codepoint, at its index.
     listed_chars: []const font_mod.Glyph = &.{},
+    /// Where a codepoint the font lacks is looked for; null while the host has no fallback
+    /// fonts (`CmdPayload.set_fallback_fonts`).
+    fallback: ?Fallback = null,
+
+    /// The host's fallback fonts, as a font sees them: a codepoint the font lacks is looked
+    /// for in each in turn, drawn at the font's em.
+    pub const Fallback = struct {
+        /// The host's cache of fallback glyphs, passed to `get_fn`.
+        context: *anyopaque,
+        /// The em of the font that falls back, in pixels: fallback glyphs are drawn at it so
+        /// they match its letters.
+        em_pixels: f32,
+        /// Writes the glyph of `codepoint` at `em_pixels` to `found`, or returns false when
+        /// no fallback font has it. The first time a glyph is asked for it is drawn into one
+        /// of the host's atlases there and then; until that atlas is on the GPU, `found.image`
+        /// is 0, and the glyph measures but draws nothing. C's calling convention: a plugin
+        /// built by another backend than the host's calls it. The sim thread's.
+        get_fn: *const fn (context: *anyopaque, em_pixels: f32, codepoint: u32, found: *FallbackGlyph) callconv(.c) bool,
+    };
+
+    /// A glyph and the atlas it is drawn from: the font's own, or a fallback font's.
+    pub const Resolved = struct {
+        /// The glyph, its box in `image`'s atlas.
+        glyph: font_mod.Glyph,
+        /// The atlas's roop image handle; 0 for a fallback glyph whose atlas is not yet on the
+        /// GPU, which measures but draws nothing.
+        image: u32,
+    };
+
+    /// The glyph for `codepoint` from the font, or else from its fallback fonts; null when
+    /// none has it.
+    pub fn resolve(self: FontView, codepoint: u32) ?Resolved {
+        if (self.glyph(codepoint)) |own| return .{ .glyph = own.*, .image = self.image };
+        const fallback = self.fallback orelse return null;
+        var found: FallbackGlyph = undefined;
+        const has_glyph = fallback.get_fn(fallback.context, fallback.em_pixels, codepoint, &found);
+        if (!has_glyph) return null;
+        return .{ .glyph = found.glyph, .image = found.image };
+    }
 
     /// The glyph for `codepoint`, or null when the font was not baked with it. A listed font is
-    /// searched in order.
+    /// searched in order. Its fallback fonts are not looked in (`resolve` does).
     pub fn glyph(self: FontView, codepoint: u32) ?*const font_mod.Glyph {
         if (self.listed_codepoints.len != 0) {
             for (self.listed_codepoints, 0..) |listed, index| {
@@ -764,6 +810,14 @@ pub const FontView = struct {
         const mono_advance = if (self.glyph('M')) |wide| wide.xadvance else 0;
         return .{ .pixel_height = self.pixel_height, .ascender = ascender, .cap_height = cap_height, .mono_advance = mono_advance };
     }
+};
+
+/// A fallback glyph as the host hands it over (`FontView.Fallback.get_fn`).
+pub const FallbackGlyph = extern struct {
+    /// The glyph, its box in `image`'s atlas.
+    glyph: font_mod.Glyph,
+    /// The atlas's roop image handle, or 0 while the atlas is not yet on the GPU.
+    image: u32,
 };
 
 /// What a font measures, for code that lays text out where nothing draws: a kernel that
@@ -856,38 +910,110 @@ pub const FontProvider = struct {
 /// No plugin: a `load_resource` whose path is the file's own.
 pub const no_plugin: Atom = @enumFromInt(0);
 
-/// The font `ui` draws with when an element names none. The editor loads it, with the icon
-/// fonts below and the `font_*` sizes, from its own `assets/fonts/`; resources loads no font
-/// itself.
-pub const kDefaultFontName: Atom = Atom.from("default");
+/// A font text is drawn in, described by what it is: a file of a plugin's `assets/` baked at a
+/// pixel height with a set of glyphs. Its row in the application scope is named by all of that
+/// (`init`), so callers that describe the same font share one bake and agree on no name
+/// beforehand. Text drawn in a font that is not loaded yet is drawn in the engine's font
+/// (`engine`) while drawing asks for this one (roop's `Context.text`). A value whose slices
+/// are static: `init` makes it at compile time.
+pub const Font = struct {
+    /// The name its row is found by in the application scope, made by `init` from the rest.
+    name: Atom,
+    /// What `name` is made from, as a person reads it in a log: `<plugin>/<path>@<height>`,
+    /// then `+<first>` for a range that does not start at a space or `#<hash>` for a list.
+    label: []const u8,
+    /// The plugin whose `assets/` holds `path`; `no_plugin` for a font its owner loads itself.
+    plugin: Atom,
+    /// The file within the plugin's `assets/`. Empty for a font its owner loads itself, as the
+    /// engine's is: drawing never asks for one (roop's `Context.fontView`).
+    path: []const u8,
+    /// The height it is baked at, in pixels; zero for the engine's font, whose height is the
+    /// host's.
+    pixel_height: f32,
+    /// As `ResourceDecl.glyph_first_char`.
+    glyph_first_char: u32 = 32,
+    /// As `ResourceDecl.glyph_codepoints`. Static.
+    glyph_codepoints: []const u32 = &.{},
 
-/// The editor's 16 pixel icon font.
-pub const kIconFontName: Atom = Atom.from("icon");
-/// The editor's rail icon font, baked at `font.kRailIconPixelHeight`.
-pub const kRailIconFontName: Atom = Atom.from("icon_rail");
-/// The editor's row icon font, baked at `font.kRowIconPixelHeight`.
-pub const kRowIconFontName: Atom = Atom.from("icon_row");
+    /// What `init` makes a font from: the plugin's name and the rest as `Font`'s fields.
+    pub const Spec = struct {
+        /// The name of the plugin whose `assets/` holds `path`.
+        plugin: []const u8,
+        /// The file within the plugin's `assets/`.
+        path: []const u8,
+        /// The height it is baked at, in pixels.
+        pixel_height: f32,
+        /// As `ResourceDecl.glyph_first_char`.
+        glyph_first_char: u32 = 32,
+        /// As `ResourceDecl.glyph_codepoints`.
+        glyph_codepoints: []const u32 = &.{},
+    };
 
-/// The name of the editor's `font_11` size.
-pub const kFont11Name: Atom = Atom.from("font_11");
-/// The name of the editor's `font_12` size.
-pub const kFont12Name: Atom = Atom.from("font_12");
-/// The name of the editor's `font_13` size.
-pub const kFont13Name: Atom = Atom.from("font_13");
-/// The name of the editor's `font_14` size.
-pub const kFont14Name: Atom = Atom.from("font_14");
-/// The name of the editor's `font_17` size.
-pub const kFont17Name: Atom = Atom.from("font_17");
-/// The name of the editor's `font_20` size.
-pub const kFont20Name: Atom = Atom.from("font_20");
-/// The name of the editor's `font_22` size.
-pub const kFont22Name: Atom = Atom.from("font_22");
-/// The name of the editor's `font_24` size.
-pub const kFont24Name: Atom = Atom.from("font_24");
-/// The name of the editor's `font_32` size.
-pub const kFont32Name: Atom = Atom.from("font_32");
-/// The editor's 24 pixel icon font, baked by range from `0xf060`.
-pub const kIcon24Name: Atom = Atom.from("icon_24");
+    /// The font `spec` describes, named by all of it. A spec that cannot be baked is a compile
+    /// error.
+    pub fn init(comptime spec: Spec) Font {
+        comptime {
+            // Checking a list for repeats compares each codepoint with the rest.
+            @setEvalBranchQuota(4 * font_mod.kMaxCodepoints * font_mod.kMaxCodepoints + 10_000);
+            const range = spec.glyph_codepoints.len == 0;
+            if (range) {
+                font_mod.validateBakeParameters(spec.pixel_height, spec.glyph_first_char) catch |err| @compileError("font " ++ spec.path ++ ": " ++ @errorName(err));
+            } else {
+                font_mod.validateCodepoints(spec.pixel_height, spec.glyph_codepoints) catch |err| @compileError("font " ++ spec.path ++ ": " ++ @errorName(err));
+            }
+            const glyphs = if (!range)
+                std.fmt.comptimePrint("#{x}", .{codepointsHash(spec.glyph_codepoints)})
+            else if (spec.glyph_first_char != 32)
+                std.fmt.comptimePrint("+{x}", .{spec.glyph_first_char})
+            else
+                "";
+            const label = std.fmt.comptimePrint("{s}/{s}@{d}{s}", .{ spec.plugin, spec.path, spec.pixel_height, glyphs });
+            return .{
+                .name = Atom.from(label),
+                .label = label,
+                .plugin = Atom.from(spec.plugin),
+                .path = spec.path,
+                .pixel_height = spec.pixel_height,
+                .glyph_first_char = spec.glyph_first_char,
+                .glyph_codepoints = spec.glyph_codepoints,
+            };
+        }
+    }
+
+    /// The engine's font, which the host bakes before any plugin loads and which never goes:
+    /// text that names no font is drawn in it, and so is text in a font not loaded yet.
+    pub const engine: Font = .{ .name = Atom.from(engine_label), .label = engine_label, .plugin = no_plugin, .path = "", .pixel_height = 0 };
+    const engine_label = "engine_font";
+
+    /// Whether drawing may ask for it when it is not loaded: whether it has a file to load.
+    pub fn askable(self: Font) bool {
+        return self.path.len != 0;
+    }
+
+    /// The declaration that loads it; borrows its slices.
+    pub fn decl(self: Font) ResourceDecl {
+        return .{
+            .name = self.name,
+            .kind = .font,
+            .path = self.path,
+            .pixel_height = self.pixel_height,
+            .glyph_first_char = self.glyph_first_char,
+            .glyph_codepoints = self.glyph_codepoints,
+        };
+    }
+
+    // FNV-1a over the codepoints' values, which compile-time code can read where it cannot
+    // reinterpret them as bytes.
+    fn codepointsHash(comptime codepoints: []const u32) u64 {
+        @setEvalBranchQuota(20 * codepoints.len + 1000);
+        var hash: u64 = 0xcbf29ce484222325;
+        for (codepoints) |codepoint| {
+            hash ^= codepoint;
+            hash *%= 0x100000001b3;
+        }
+        return hash;
+    }
+};
 
 /// Why a configuration file did not load: `invalid_path`, empty or holding a NUL; `read_failed`;
 /// `parse_failed`; `out_of_memory`; `stale_scope`.
@@ -1082,6 +1208,18 @@ pub const CmdPayload = union(enum) {
         reply: sequencer.ReplyTo = .{},
     },
 
+    /// Sets the fonts text falls back to for a character its own font lacks, searched in
+    /// order, replacing any set before: every font then looks in them (`FontView.resolve`).
+    /// A file is read the first time a character is looked for in it; one that cannot be read,
+    /// or is no font stb_truetype reads (a CFF2 variable font), is logged and left out.
+    /// Characters are drawn one by one, never shaped: a script whose letters join or reorder
+    /// (Arabic, the Indic scripts) shows each in its own form. Not answered.
+    set_fallback_fonts: struct {
+        /// Absolute paths of font files or collections (the first font of a collection is
+        /// read), separated by `\n`; empty for none.
+        paths: []const u8,
+    },
+
     /// Scans the `assets/tables/` of each loaded plugin that holds tables again, and brings
     /// `resources_table_assets` and `resources_table_scopes` in step with what is found. Answered
     /// with a `TableIndexMsg`.
@@ -1213,6 +1351,18 @@ pub const Requests = sequencer.Commands(CmdPayload);
 pub fn request(memory: *memory_mod.Memory, tables: *Table.Registry, wanted: CmdPayload) void {
     Requests.of(memory, tables, commands_table_name).push(wanted);
 }
+test "a font is named by its plugin, file, height and glyphs, so describing it again finds the same row" {
+    const sans = comptime Font.init(.{ .plugin = "editor", .path = "fonts/a.ttf", .pixel_height = 24 });
+    try std.testing.expectEqual(sans.name, comptime Font.init(.{ .plugin = "editor", .path = "fonts/a.ttf", .pixel_height = 24 }).name);
+    try std.testing.expectEqualStrings("editor/fonts/a.ttf@24", sans.label);
+    try std.testing.expect(sans.name != comptime Font.init(.{ .plugin = "demo", .path = "fonts/a.ttf", .pixel_height = 24 }).name);
+    try std.testing.expect(sans.name != comptime Font.init(.{ .plugin = "editor", .path = "fonts/a.ttf", .pixel_height = 17 }).name);
+    const listed = comptime Font.init(.{ .plugin = "editor", .path = "fonts/a.ttf", .pixel_height = 24, .glyph_codepoints = &.{ 0x41, 0x42 } });
+    const other_list = comptime Font.init(.{ .plugin = "editor", .path = "fonts/a.ttf", .pixel_height = 24, .glyph_codepoints = &.{ 0x41, 0x43 } });
+    try std.testing.expect(listed.name != sans.name and listed.name != other_list.name);
+    try std.testing.expect(sans.askable() and !Font.engine.askable());
+}
+
 test "resource declarations validate names, paths, and font parameters" {
     const name = Atom.from("resource.test");
     try validateResourceDecl(.{ .name = name, .kind = .texture, .path = "assets/test.png" });

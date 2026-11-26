@@ -19,7 +19,8 @@ const windows = @import("windows.zig");
 const style = @import("ui/style.zig");
 const vsync = @import("ui/vsync.zig");
 const state = @import("state.zig");
-const workspaces = @import("workspaces.zig");
+const fixed_panels = @import("fixed_panels.zig");
+const editor_sequencer = @import("editor_sequencer.zig");
 const sequencer = mesha.sequencer;
 
 /// The inspector's root, its table windows' too: their panels draw again when its systems
@@ -66,7 +67,7 @@ fn widgetPanel(id: Atom, title: []const u8) plugin.panels.Open {
     return .{ .id = id, .title = title, .root = inspector_root, .side = .right, .share = 0.34 };
 }
 
-/// The frame times widget's panel, a fixed panel the workspaces system declares while it is
+/// The frame times widget's panel, a fixed panel `fixed_panels` declares while it is
 /// shown.
 pub const perf_panel = widgetPanel(Atom.from(perf_widget), perf_title);
 /// The memory widget's panel, likewise.
@@ -113,8 +114,8 @@ fn handleWidgetReply(memory: *memory_mod.Memory, tables: *Table.Registry, atoms:
     if (event.completion) |completion| {
         const choice = std.enums.fromInt(WidgetChoice, completion.data[0]) orelse return;
         switch (choice) {
-            .perf => workspaces.showPanel(tables, atoms, perf_panel.id, .beside_focused, .take),
-            .memory => workspaces.showPanel(tables, atoms, memory_panel.id, .beside_focused, .take),
+            .perf => fixed_panels.showPanel(tables, atoms, perf_panel.id, .beside_focused, .take),
+            .memory => fixed_panels.showPanel(tables, atoms, memory_panel.id, .beside_focused, .take),
             .table => plugin.action_api.requestInvoke(tables, .{ plugin.action_api.global_mode, atoms.intern("picker_toggle") }),
         }
     }
@@ -150,7 +151,7 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
     result.writeIfPresent(frame.tables, Atom.from(plugin.action_api.commands_table_name));
     // Focusing, docking and maximizing ask the panels; a widget chosen is a fixed panel shown.
     result.writeIfPresent(frame.tables, Atom.from(plugin.panels.commands_table_name));
-    result.writeIfPresent(frame.tables, Atom.from(workspaces.shown_panels_table_name));
+    result.writeIfPresent(frame.tables, Atom.from(fixed_panels.shown_panels_table_name));
     return result;
 }
 
@@ -225,7 +226,7 @@ const FrameTimePlot = struct {
         ctx.fillColor(style.col.canvas);
         ctx.fill();
         // A band per display refresh a frame can take, which a reader compares against.
-        vsync.drawBands(ctx, size.x, size.y, self.maximum_ms, self.vsync_ms, style.ui_font);
+        vsync.drawBands(ctx, size.x, size.y, self.maximum_ms, self.vsync_ms, style.small_font);
         for (self.series) |series| self.drawLine(series, size, ctx);
         self.drawLegend(ctx);
     }
@@ -256,7 +257,7 @@ const FrameTimePlot = struct {
 
     /// Each series' name in its color, along the top left.
     fn drawLegend(self: *const FrameTimePlot, ctx: *roop.Context) void {
-        ctx.fontFace(style.ui_font);
+        ctx.fontFace(style.small_font);
         ctx.textAlign(.{ .left = true, .baseline = true });
         var x: f32 = 6;
         for (self.series) |series| {
@@ -362,7 +363,7 @@ fn seriesLabel(atoms: *Atom.Registry, field: Atom) []const u8 {
 
 const Bar = struct { name: []const u8, value: f64, peak: f64 = 0 };
 const BarUnit = enum { megabytes, milliseconds };
-const bar_row_height: f32 = 17;
+const bar_row_height: f32 = style.metric.small_text_line + 2;
 
 /// A group of labeled bars on one scale, each with a tick at its peak when it has one. Rows keep
 /// their height, so a short pane shows fewer bars rather than overlapping labels.
@@ -386,7 +387,7 @@ const BarGroup = struct {
         const label_width = @min(150, size.x * 0.4);
         const plot_width = @max(0, size.x - label_width - 70);
         const row_capacity: usize = @intFromFloat(@floor(size.y / bar_row_height));
-        ctx.fontFace(style.ui_font);
+        ctx.fontFace(style.small_font);
         for (self.bars[0..@min(self.bars.len, row_capacity)], 0..) |bar, index| {
             const y = bar_row_height * @as(f32, @floatFromInt(index));
             const track_height = bar_row_height - 3;
@@ -575,7 +576,7 @@ pub fn renderPanel(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .hovered = state.hoveredElementId(tables),
         .depth = panels_mod.kPanelHitDepth,
-    }, ctx, state.hitRegions(tables, atoms));
+    }, ctx, state.hitRegions(tables, atoms), editor_sequencer.redrawInbox());
 }
 
 /// Room for the largest widget, a table window, in one frame's tree.

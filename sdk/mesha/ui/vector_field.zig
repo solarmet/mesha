@@ -15,9 +15,10 @@
 //! The colours, font and corner radius are a `Style`, the caller's from its theme or
 //! `default_style`.
 const std = @import("std");
-const Atom = @import("../core/atom.zig").Atom;
+const Atom = atom.Atom;
 const roop = @import("../systems/roop.zig");
 const ui = @import("ui.zig");
+const atom = @import("../core/atom.zig");
 
 /// The letters of a vector's components, in order.
 pub const axis_letters = [_][]const u8{ "X", "Y", "Z", "W" };
@@ -30,14 +31,15 @@ pub const shown_decimals: u8 = 2;
 
 const component_gap: f32 = 4;
 const axis_letter_width: f32 = 10;
-/// Space inside a component's frame around its parts, and between them, in pixels.
+/// Space inside a component's frame at its ends, and between its parts, in pixels. Above and
+/// below there is none: the text is centred in the height the caller gives.
 const frame_padding: f32 = 6;
 
 /// How a vector's components are painted. The caller's, usually from its theme;
 /// `default_style` for a plugin without one.
 pub const Style = struct {
     /// The name of the font of the numbers and the axis letters.
-    font: Atom,
+    font: roop.Font,
     /// The colour of a number, unless its `Component` gives one.
     text: ui.Color,
     /// The colour of the axis letters.
@@ -124,6 +126,7 @@ fn frameOf(frame_state: FrameState, size: ui.Size, style: Style) ui.RectParams {
         .cross_align = .center,
         .size = size,
         .padding = frame_padding,
+        .padding_y = 0,
         .gap = frame_padding,
         .bg = if (active) style.background_active else style.background,
         .border = if (active) style.border_active else style.border,

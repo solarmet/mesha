@@ -37,7 +37,8 @@
 //! stack, each holding its system, child sequencer or call. Nothing keeps either past the call
 //! it was built for. When the owner starts it builds its sequencer once to intern the names
 //! (`internNames`; a host system's owner `claimNames`, a plugin also `checkNamesFree`), make
-//! the faults table (`ensure`) and its systems' inboxes (`ensureInboxes`); each frame it
+//! the faults table (`ensure`) and its systems' inboxes and tables of subscriptions
+//! (`ensureInboxes`); each frame it
 //! builds it again, with the same function so the two agree, and the root's owner calls
 //! `beginFrame` and then `run` with an `Env`; a plugin runs its sequencers as children of the
 //! layer the host hands it. After the root's run the host calls
@@ -429,7 +430,8 @@ pub fn internNames(atoms: *Atom.Registry, sequencer: *const Sequencer) !void {
     for (sequencer.steps) |*step| switch (step.*) {
         .system => |*system| {
             var buffer: [inbox_name_max]u8 = undefined;
-            try atoms.tryInternAll(&.{ system.name, inboxName(system.*, &buffer) });
+            var held_buffer: [subscriptions_of_name_max]u8 = undefined;
+            try atoms.tryInternAll(&.{ system.name, inboxName(system.*, &buffer), subscriptionsOfName(system.*, &held_buffer) });
             try atoms.tryInternAll(system.names);
             const system_scope = log.registerScope(system.name);
             for (system.kernels) |kernel| {
@@ -739,6 +741,7 @@ fn runSystem(layer: *Layer, env: *const Env, system: *const System) Outcome {
         return .faulted;
     };
     const frame = systemFrame(env, system, messages);
+    const held = env.tables.findHandleByName(subscriptionsOf(system.*));
     switch (runsThisFrame(system, &frame)) {
         .runs => {},
         .idle => {
@@ -747,7 +750,7 @@ fn runSystem(layer: *Layer, env: *const Env, system: *const System) Outcome {
         },
         // Switched off, it hears nothing: what it subscribed to goes.
         .inactive => {
-            dropSubscriptions(layer, env.tables, name) catch |err| {
+            dropSubscriptions(layer, env.tables, held) catch |err| {
                 layer.detach();
                 recordFault(env, name, null, err);
                 return .faulted;
@@ -772,7 +775,7 @@ fn runSystem(layer: *Layer, env: *const Env, system: *const System) Outcome {
     defer layer.detach();
     // Its run subscribes anew: what it subscribed to before goes, through the run, so a
     // fault keeps it.
-    dropSubscriptions(layer, env.tables, name) catch |err| {
+    dropSubscriptions(layer, env.tables, held) catch |err| {
         recordFault(env, name, null, err);
         return .faulted;
     };
@@ -799,7 +802,10 @@ fn runSystem(layer: *Layer, env: *const Env, system: *const System) Outcome {
         recordFault(env, name, null, failure);
         return .faulted;
     }
-    claimSubscriptions(env.tables, name, ordinal);
+    claimSubscriptions(env.tables, name, ordinal, held) catch |err| {
+        recordFault(env, name, null, err);
+        return .faulted;
+    };
     // A system that heard something draws again. What it subscribes to is not something it
     // shows.
     var changed = messages.len != 0;
@@ -834,7 +840,10 @@ fn runsThisFrame(system: *const System, frame: *const Frame) Runs {
 /// subscriptions hold rows systems append in their runs, each naming its subscriber in
 /// a `subscriber` column and its place in a `subscription_order` column, which the sequencer
 /// fills. A system's rows last until it runs again, which replaces them, or is switched off,
-/// which drops them; a system that does not run keeps them. Readers walk them in order: the
+/// which drops them; a system that does not run keeps them. Each system's table of
+/// subscriptions (`subscriptionsOf`) lists its rows, so replacing them touches only those rows. A
+/// system that appends one needs that table, from `ensureInboxes`, or its run faults with
+/// `error.MissingTable`. Readers walk them in order: the
 /// order systems come in a frame, then the order each appended its rows, as when every
 /// system appended its own every frame (`orderSubscriptions`). The host empties every one of
 /// them with `resetSubscriptions`, as when a plugin loads, after which every system runs to
@@ -857,7 +866,6 @@ pub const subscriber_field = "subscriber";
 /// subscriber's place in the frame in the high 16 bits, the row's place among that subscriber's in
 /// the low. The sequencer fills it; `orderSubscriptions` sorts by it.
 pub const subscription_order_field = "subscription_order";
-const SubscriberCell = struct { subscriber: *Atom };
 
 /// Records `name`, made with a `subscriber` atom column and a `subscription_order` column, as a
 /// table of subscriptions, and makes the two tables that keep track of them unless they are there.
@@ -899,41 +907,74 @@ fn isSubscriptions(tables: *Table.Registry, handle: Table.Handle) bool {
     return false;
 }
 
-/// Removes `system`'s rows from every table of subscriptions, through `layer`.
-fn dropSubscriptions(layer: *Layer, tables: *Table.Registry, system: Atom) !void {
-    const listed = tables.findByName(subscription_tables) orelse return;
-    var names = listed.readQuery(SubscriptionTableView);
-    while (names.next()) |entry| {
-        const handle = tables.findHandleByName(entry.view.table.*) orelse continue;
-        try layer.attach(handle, .write);
-        const table = tables.get(handle) orelse continue;
-        var found: [64]Table.RowHandle = undefined;
-        while (true) {
-            var count: usize = 0;
-            var rows = table.readQuery(SubscriberCell);
-            while (rows.next()) |row| {
-                if (row.view.subscriber.* != system) continue;
-                found[count] = row.handle;
-                count += 1;
-                if (count == found.len) break;
-            }
-            for (found[0..count]) |row| table.free(row);
-            // The bytes the rows named are dead: shed once no run holds the table.
-            if (count != 0) table.compact_payloads_wanted = true;
-            if (count < found.len) break;
-        }
+const subscriptions_of_prefix = "subscriptions_of.";
+const subscriptions_of_name_max = inbox_name_max - "inbox.".len + subscriptions_of_prefix.len;
+
+/// The name of the system's table of its subscriptions, `subscriptions_of.<system>`: a row
+/// (`subscription`, a `Table.Ref`) for each row the system's last run appended to a table of
+/// subscriptions. The sequencer fills it as the run finishes, and empties it, freeing the rows
+/// it names, when the system runs again or is switched off, all through the run, so a fault
+/// keeps both. `ensureInboxes` makes it.
+pub fn subscriptionsOf(system: System) Atom {
+    var buffer: [subscriptions_of_name_max]u8 = undefined;
+    return Atom.from(subscriptionsOfName(system, &buffer));
+}
+
+fn subscriptionsOfName(system: System, buffer: *[subscriptions_of_name_max]u8) []const u8 {
+    return std.fmt.bufPrint(buffer, subscriptions_of_prefix ++ "{s}", .{system.name}) catch unreachable;
+}
+
+const HeldSubscription = struct { subscription: *Table.Ref };
+
+/// The table a row of a system's table of subscriptions names, or null when it is gone.
+fn heldTable(tables: *Table.Registry, subscription: Table.Ref) ?Table.Handle {
+    if (tables.get(subscription.table)) |table| {
+        if (table.name == subscription.table_name) return subscription.table;
     }
+    // The table was replaced since the row was appended.
+    return tables.findHandleByName(subscription.table_name);
+}
+
+/// Frees the rows `held`, a system's table of subscriptions, names, and empties it: through
+/// `layer`, which attaches it and the tables it names for writing, or outside any run when
+/// `layer` is null. A row already gone is passed over.
+fn freeHeld(layer: ?*Layer, tables: *Table.Registry, held: Table.Handle) !void {
+    if (layer) |run_layer| try run_layer.attach(held, .write);
+    const held_table = tables.get(held) orelse return;
+    var entries = held_table.readQuery(HeldSubscription);
+    while (entries.next()) |entry| {
+        const subscription = entry.view.subscription.*;
+        const handle = heldTable(tables, subscription) orelse continue;
+        if (layer) |run_layer| try run_layer.attach(handle, .write);
+        const table = tables.get(handle) orelse continue;
+        const row: Table.RowHandle = .{ .row = subscription.row, .generation = subscription.row_generation };
+        if (!table.valid(row)) continue;
+        table.free(row);
+        // The bytes the row named are dead: shed once no run holds the table.
+        table.compact_payloads_wanted = true;
+    }
+    held_table.clear();
+}
+
+/// Removes the rows the system's table of subscriptions, `held`, names, through `layer`.
+/// Nothing to do for a system with no such table: it never had one to append to.
+fn dropSubscriptions(layer: *Layer, tables: *Table.Registry, held: ?Table.Handle) !void {
+    try freeHeld(layer, tables, held orelse return);
 }
 
 /// Names `system` the subscriber of the rows its kernels appended to the tables of
-/// subscriptions, and places them at the system's `ordinal` in the frame. They are the rows
-/// the run appended that name no subscriber: every system before it in the run named its own
-/// as it finished, and rows from earlier frames all name theirs.
-fn claimSubscriptions(tables: *Table.Registry, system: Atom, ordinal: u32) void {
+/// subscriptions, places them at the system's `ordinal` in the frame, and lists them in its
+/// table of subscriptions, `held`, which `dropSubscriptions` attached. They are the rows the run
+/// appended that name no subscriber: every system before it in the run named its own as it
+/// finished, and rows from earlier frames all name theirs. `error.MissingTable` when the system
+/// appended a row and has no table of subscriptions to list it in.
+fn claimSubscriptions(tables: *Table.Registry, system: Atom, ordinal: u32, held: ?Table.Handle) !void {
     const listed = tables.findByName(subscription_tables) orelse return;
+    const held_table = if (held) |handle| tables.get(handle) else null;
     var names = listed.readQuery(SubscriptionTableView);
     while (names.next()) |entry| {
-        const table = tables.findByName(entry.view.table.*) orelse continue;
+        const table_handle = tables.findHandleByName(entry.view.table.*) orelse continue;
+        const table = tables.get(table_handle).?;
         const run_journal = table.journal orelse continue;
         const field = table.getSchema().fieldIndex(subscriber_field) orelse continue;
         const bit = table.getSchema().fields[field].bit;
@@ -946,6 +987,14 @@ fn claimSubscriptions(tables: *Table.Registry, system: Atom, ordinal: u32) void 
             const place = (@as(u32, @min(ordinal, std.math.maxInt(u16))) << 16) | @min(appended, max_rows_per_subscriber - 1);
             table.writeFieldSingle(u32, row, subscription_order_field, place) catch continue;
             appended += 1;
+            const list = held_table orelse return error.MissingTable;
+            const subscription: Table.Ref = .{
+                .table_name = table.name,
+                .table = table_handle,
+                .row = row.row,
+                .row_generation = row.generation,
+            };
+            _ = try list.tryInsert(.{ .subscription = subscription });
         }
     }
 }
@@ -1024,37 +1073,15 @@ pub fn beginFrame(tables: *Table.Registry) void {
 pub fn retireSubscribers(tables: *Table.Registry, retired: *const Sequencer) void {
     for (retired.steps) |*step| switch (step.*) {
         .system => |*system| {
-            const name = Atom.from(system.name);
-            removeSubscriptions(tables, name);
-            noteRetired(tables, name);
+            if (tables.findHandleByName(subscriptionsOf(system.*))) |held| {
+                // Outside any run, with no layer: nothing here can fail.
+                freeHeld(null, tables, held) catch unreachable;
+            }
+            noteRetired(tables, Atom.from(system.name));
         },
         .sequencer => |*child| retireSubscribers(tables, child),
         .call => {},
     };
-}
-
-/// Removes `system`'s rows from every table of subscriptions, outside any run.
-fn removeSubscriptions(tables: *Table.Registry, system: Atom) void {
-    const listed = tables.findByName(subscription_tables) orelse return;
-    var names = listed.readQuery(SubscriptionTableView);
-    while (names.next()) |entry| {
-        const table = tables.findByName(entry.view.table.*) orelse continue;
-        var found: [64]Table.RowHandle = undefined;
-        while (true) {
-            var count: usize = 0;
-            var rows = table.readQuery(SubscriberCell);
-            while (rows.next()) |row| {
-                if (row.view.subscriber.* != system) continue;
-                found[count] = row.handle;
-                count += 1;
-                if (count == found.len) break;
-            }
-            for (found[0..count]) |row| table.free(row);
-            // The bytes the rows named are dead: shed once no run holds the table.
-            if (count != 0) table.compact_payloads_wanted = true;
-            if (count < found.len) break;
-        }
-    }
 }
 
 /// Puts each table of subscriptions in its readers' order, outside any run: after a frame's
@@ -1215,8 +1242,9 @@ pub fn hasUntakenMessage(inbox: *Table) bool {
     return rows.next() != null;
 }
 
-/// Makes the inbox table of every system under the sequencer, unless it is there, and interns its
-/// name. An owner calls it when it starts, outside any run.
+/// Makes the inbox table and the table of subscriptions (`subscriptionsOf`) of every system
+/// under the sequencer, unless they are there, and interns their names. An owner calls it when
+/// it starts, outside any run.
 pub fn ensureInboxes(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables: *Table.Registry, sequencer: *const Sequencer) !void {
     for (sequencer.steps) |*step| switch (step.*) {
         .system => |*system| {
@@ -1230,6 +1258,15 @@ pub fn ensureInboxes(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables:
             const name = inboxName(system.*, &buffer);
             try atoms.tryInternAll(&.{name});
             _ = try tables.ensure(&schema, 64, Atom.from(name), .durable);
+
+            var held_schema: Table.Schema = undefined;
+            try held_schema.init(scratch.allocator, atoms, 1);
+            defer held_schema.deinit();
+            try held_schema.addFieldFallible("subscription", Table.Ref, .ref);
+            var held_buffer: [subscriptions_of_name_max]u8 = undefined;
+            const held_name = subscriptionsOfName(system.*, &held_buffer);
+            try atoms.tryInternAll(&.{held_name});
+            _ = try tables.ensure(&held_schema, 16, Atom.from(held_name), .durable);
         },
         .sequencer => |*child| try ensureInboxes(scratch, atoms, tables, child),
         .call => {},
@@ -3010,13 +3047,16 @@ test "a system's subscriptions last until it runs again, and go when it is switc
     try testing.expectEqual(Outcome.faulted, run(&root, &env, null));
     try Expect.only(subscriptions, 2);
     f.state().mode.* = 0;
+    // Its table of subscriptions kept the row through the fault: the next run replaces it.
+    try testing.expectEqual(Outcome.done, run(&root, &env, null));
+    try Expect.only(subscriptions, 3);
 
     // After a reset it runs to subscribe again, idle or not.
     other_state.count.* = 0;
     resetSubscriptions(&f.tables);
     try testing.expectEqual(@as(u32, 0), subscriptions.count());
     try testing.expectEqual(Outcome.done, run(&root, &env, null));
-    try Expect.only(subscriptions, 3);
+    try Expect.only(subscriptions, 4);
 
     // Switched off, it hears nothing.
     other_state.mode.* = 0;

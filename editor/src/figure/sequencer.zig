@@ -507,7 +507,7 @@ fn addDiamond(ctx: *roop.Context, x: f32, y: f32, radius: f32) void {
 }
 
 /// `text` cut short with "..." to fit `width`.
-fn fitted(ctx: *roop.Context, font: Atom, text: []const u8, width: f32, buffer: []u8) []const u8 {
+fn fitted(ctx: *roop.Context, font: roop.Font, text: []const u8, width: f32, buffer: []u8) []const u8 {
     if (ctx.measureText(font, text).w <= width) return text;
     var length = @min(text.len, buffer.len -| 3);
     while (length > 0) : (length -= 1) {

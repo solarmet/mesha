@@ -27,6 +27,8 @@ const list = @import("list_navigation.zig");
 const action_palette = @import("../action_palette.zig");
 const workspace = @import("workspace.zig");
 const chrome = @import("chrome.zig");
+const editor_sequencer = @import("../editor_sequencer.zig");
+const color_picker = @import("color_picker.zig");
 
 const Log = mesha.log.scope("figure_editor");
 /// This file's profile zones, in its log scope.
@@ -163,7 +165,7 @@ pub fn render(
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .hovered = editor_state.hoveredElementId(tables),
         .depth = depth,
-    }, render_context, hits);
+    }, render_context, hits, editor_sequencer.redrawInbox());
 }
 
 /// The gap between the inspector's rows, and what a field's row and a section's heading each
@@ -224,7 +226,7 @@ pub fn fieldValue(tree: *ui.Tree, id: anytype, text: []const u8, color: ?session
     defer tree.endRect();
     if (color) |swatch| {
         const swatch_id = ui.ElementId{ .atom = element.atom, .extra = element.extra +% 1 };
-        @import("color_picker.zig").swatch(tree, swatch_id, swatch, .{ .w = .{ .fixed = 18 }, .h = .{ .fixed = 16 } });
+        color_picker.swatch(tree, swatch_id, swatch, .{ .w = .{ .fixed = 18 }, .h = .{ .fixed = 16 } });
     }
     const text_id = ui.ElementId{ .atom = element.atom, .extra = element.extra +% 2 };
     tree.text(text_id, text, .{ .font = style.ui_font, .color = style.col.text, .size_hint = .{ .w = .fill } });
@@ -901,7 +903,7 @@ pub fn renderTimeline(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom
         .root_size = .{ .x = viewport.width, .y = viewport.height },
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .depth = editor_module.kHitDepth,
-    }, render_context, hits);
+    }, render_context, hits, editor_sequencer.redrawInbox());
     var tree = ui.Tree.init(scratch, atoms, 128) catch return;
     const editor = session.get(tables);
     const available = session.definitionInfo(tables, atoms, editor.doc.*) != null;
@@ -927,5 +929,5 @@ pub fn renderTimeline(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .hovered = hovered,
         .depth = editor_module.kHitDepth,
-    }, render_context, hits);
+    }, render_context, hits, editor_sequencer.redrawInbox());
 }

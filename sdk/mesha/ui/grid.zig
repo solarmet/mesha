@@ -46,7 +46,7 @@
 //!
 //! Its colours, fonts and metrics are a `Style`: the caller's theme, or `default_style`.
 const std = @import("std");
-const Atom = @import("../core/atom.zig").Atom;
+const Atom = atom.Atom;
 const math = @import("../core/math.zig");
 const memory_mod = @import("../core/memory.zig");
 const sequencer = @import("../core/sequencer.zig");
@@ -60,7 +60,9 @@ const values = @import("grid/values.zig");
 const vector_field = @import("vector_field.zig");
 
 const FieldDescriptor = Table.FieldDescriptor;
-const Log = @import("../core/log.zig").scope("ui");
+const atom = @import("../core/atom.zig");
+const log = @import("../core/log.zig");
+const Log = log.scope("ui");
 
 /// The height of a row of the grid, and of a field of the form, in pixels.
 const row_height: f32 = 28;
@@ -390,7 +392,7 @@ pub const CellDrawable = struct {
 /// plugin without one.
 pub const Style = struct {
     /// The name of the font of every text the grid draws.
-    font: Atom,
+    font: roop.Font,
     /// A cell's value, the toolbar's chips, the selected row's number, and a column's name while
     /// its column is selected or sorted by.
     text: ui.Color,
@@ -2033,10 +2035,10 @@ pub const TextMeasure = struct {
     /// What `width_fn` reads; the caller's, alive for the call it is given to.
     context: *const anyopaque,
     /// The width of `text` in `font`, in pixels.
-    width_fn: *const fn (context: *const anyopaque, font: Atom, text: []const u8) f32,
+    width_fn: *const fn (context: *const anyopaque, font: roop.Font, text: []const u8) f32,
 
     /// The width of `text` in `font`.
-    pub fn width(measure: TextMeasure, font: Atom, text: []const u8) f32 {
+    pub fn width(measure: TextMeasure, font: roop.Font, text: []const u8) f32 {
         return measure.width_fn(measure.context, font, text);
     }
 
@@ -2045,7 +2047,7 @@ pub const TextMeasure = struct {
         return .{ .context = ctx, .width_fn = contextWidth };
     }
 
-    fn contextWidth(context: *const anyopaque, font: Atom, text: []const u8) f32 {
+    fn contextWidth(context: *const anyopaque, font: roop.Font, text: []const u8) f32 {
         const ctx: *const roop.Context = @ptrCast(@alignCast(context));
         return ctx.measureText(font, text).w;
     }
@@ -3487,7 +3489,7 @@ test "a slice placed past what 32-bit positions hold is placed where its last ro
 }
 
 /// A stand-in measure for tests: ten pixels a byte, whatever the font.
-fn tenPixelsAByte(context: *const anyopaque, font: Atom, text: []const u8) f32 {
+fn tenPixelsAByte(context: *const anyopaque, font: roop.Font, text: []const u8) f32 {
     _ = context;
     _ = font;
     return @floatFromInt(text.len * 10);

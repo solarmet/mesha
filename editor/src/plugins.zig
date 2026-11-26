@@ -294,7 +294,7 @@ fn tellAnswer(frame: *const sequencer.Frame, answer: plugins_api.Answer, asked: 
         .unsaved_tables => std.fmt.bufPrint(&sentence_buffer, "The plugin {s} has tables with unsaved edits: save them, then unload it.", .{name}),
         // A create's own answers, which come to `tellCreated`.
         .no_zig => std.fmt.bufPrint(&sentence_buffer, "The plugin {s} was not loaded: zig 0.16.0 is not on PATH, so it could not be built.", .{name}),
-        .exists, .no_sdk, .builds_off, .write_failed => std.fmt.bufPrint(&sentence_buffer, "The plugin {s} was not loaded.", .{name}),
+        .exists, .no_sdk, .builds_off, .write_failed, .building => std.fmt.bufPrint(&sentence_buffer, "The plugin {s} was not loaded.", .{name}),
     } catch |err| {
         Log.err("plugin_answer_untold", .{ .result = @tagName(answer.result), .@"error" = @errorName(err) });
         return;
@@ -334,7 +334,7 @@ fn tellCreated(frame: *const sequencer.Frame, answer: plugins_api.Answer, asked_
         .already_loaded => std.fmt.bufPrint(&sentence_buffer, "Wrote the plugin {s} in {s}, which was already loaded.", .{ name, directory }),
         .not_found, .not_a_directory => std.fmt.bufPrint(&sentence_buffer, "Wrote the plugin {s} in {s}, but its directory could not be opened to load it.", .{ name, directory }),
         // A load's and an unload's own answers.
-        .unloaded, .not_loaded, .fixed, .unsaved_tables => std.fmt.bufPrint(&sentence_buffer, "The plugin {s} was not written.", .{name}),
+        .unloaded, .not_loaded, .fixed, .unsaved_tables, .building => std.fmt.bufPrint(&sentence_buffer, "The plugin {s} was not written.", .{name}),
     } catch |err| {
         Log.err("plugin_answer_untold", .{ .result = @tagName(answer.result), .@"error" = @errorName(err) });
         return;

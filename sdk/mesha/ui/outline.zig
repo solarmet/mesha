@@ -34,11 +34,12 @@
 //! the nearest line before it that is shallower. Lines are found by their index in the list,
 //! and shown lines by their position in what `visible` gives, which is what `Cursor.index` is.
 const std = @import("std");
-const Atom = @import("../core/atom.zig").Atom;
+const Atom = atom.Atom;
 const roop = @import("../systems/roop.zig");
 const memory_mod = @import("../core/memory.zig");
 const marks = @import("marks.zig");
 const ui = @import("ui.zig");
+const atom = @import("../core/atom.zig");
 
 /// Which of the style's fonts a line is drawn in.
 pub const Font = enum {
@@ -283,9 +284,9 @@ pub const RecordOptions = struct {
 /// plugin without one. Copied into the call; it holds no pointers.
 pub const Style = struct {
     /// The font of a `.text` line.
-    text_font: Atom,
+    text_font: roop.Font,
     /// The font of a `.code` line: a monospace one, where the owner has one.
-    code_font: Atom,
+    code_font: roop.Font,
     /// The fill of the cursor's line, across the list's width.
     highlight: ui.Color,
     /// The fill of a line under the pointer.

@@ -17,8 +17,9 @@
 //!    `Tree.onScroll` and `Tree.trackHover` attach to the rect just recorded; `Tree.target` makes
 //!    the `Target` they send to.
 //!
-//! 3. `Tree.commit` with a `Config` (the root's size and where it sits), the context, and the hit
-//!    regions table, or null for ui that takes no pointer.
+//! 3. `Tree.commit` with a `Config` (the root's size and where it sits), the context, the hit
+//!    regions table, or null for ui that takes no pointer, and the inbox told when a font the
+//!    tree drew in before it loaded has loaded (`redraw_tag`).
 //!
 //! Layout: a rect is a row or a column (`RectParams.axis`) of its children, with `padding` around
 //! them (`padding_y` in its place above and below, when given) and `gap` between them, and each
@@ -43,7 +44,6 @@
 const std = @import("std");
 const color_mod = @import("../core/color.zig");
 const input_mod = @import("../systems/input.zig");
-
 /// The usual header of a panel, for a plugin that draws its panels' headers with it.
 pub const panel_header = @import("panel_header.zig");
 /// Line, bar and scatter charts of a table's numeric columns, drawn alone or as a leaf of a
@@ -71,16 +71,27 @@ pub const outline = @import("outline.zig");
 /// A unified diff's hunks read from one file's part of it, the lines of its files and hunks
 /// built for an outline, a hunk line's line in the new file, and the patch of one hunk.
 pub const diff = @import("diff.zig");
-/// An id code refers to by name: here an element's name, a font, a message tag or an inbox.
-/// `mesha.Atom`.
-pub const Atom = @import("../core/atom.zig").Atom;
 const memory_mod = @import("../core/memory.zig");
 const Table = @import("../core/table.zig");
-const Log = @import("../core/log.zig").scope("ui");
 const contract = @import("../core/contract.zig");
-const CursorKind = @import("../systems/os.zig").CursorKind;
 const math = @import("../core/math.zig");
 const roop = @import("../systems/roop.zig");
+const atom_mod = @import("../core/atom.zig");
+const log = @import("../core/log.zig");
+const os = @import("../systems/os.zig");
+
+/// An id code refers to by name: here an element's name, a font, a message tag or an inbox.
+/// `mesha.Atom`.
+pub const Atom = atom_mod.Atom;
+const Log = log.scope("ui");
+const CursorKind = os.CursorKind;
+
+/// A font text is drawn in, by what it is. `mesha.resources.Font`.
+pub const Font = roop.Font;
+/// The tag of the message `Tree.commit`'s `redraw_inbox` hears once a font the tree drew in
+/// before it loaded has loaded: a `resources.ResourceMsg`, which needs no reading. The system
+/// that reads the inbox redraws what the tree drew.
+pub const redraw_tag = roop.redraw_tag;
 
 /// An sRGB color with straight alpha, each channel 0 to 1: what every paint in this library
 /// takes.
@@ -279,8 +290,9 @@ pub const RectParams = struct {
 pub const TextParams = struct {
     /// Set by the recording call from its `id` argument; a value given here is overwritten.
     id: ElementId = .{ .atom = @enumFromInt(0) },
-    /// The name of the font the text is measured and drawn in.
-    font: Atom = roop.default_font,
+    /// The font the text is measured and drawn in. One not loaded yet is drawn in the engine's
+    /// font while it loads (`Tree.commit`).
+    font: roop.Font = roop.default_font,
 
     /// The text's color; null is opaque white.
     color: ?Color = null,
@@ -927,15 +939,24 @@ pub const Tree = struct {
     /// `initHitRegionSchema`'s columns; commit does not clear it. User data the table cannot keep
     /// is left out of its region and logged.
     ///
+    /// Text in a font not loaded yet is laid out and drawn in the engine's font, and the font is
+    /// asked for with its reply to `redraw_inbox` under `redraw_tag` (`roop.Context.redraw_inbox`):
+    /// once it loads, the system that reads that inbox redraws what this tree drew, as with
+    /// `panels.requestRedraw`. `no_inbox` still asks for the font but tells no one,
+    /// for a tree drawn every frame.
+    ///
     /// The tree is not changed and may be committed again. An invalid stream or config is a
     /// contract violation. Layout memory comes from the frame allocator, and running out of it
     /// panics.
-    pub fn commit(self: *Tree, config: Config, ctx: *roop.Context, hit_regions: ?*Table) void {
+    pub fn commit(self: *Tree, config: Config, ctx: *roop.Context, hit_regions: ?*Table, redraw_inbox: Atom) void {
         self.validateCommands() catch contract.invariant(false, "ui.commit.command_stream");
         validateConfig(config) catch contract.invariant(false, "ui.commit.config");
         var effective = config;
         if (effective.hovered == null) effective.hovered = self.hovered;
         var layout = Layout.build(self.frame_allocator, self.elements[0..self.count], effective);
+        const outer_inbox = ctx.redraw_inbox;
+        ctx.redraw_inbox = redraw_inbox;
+        defer ctx.redraw_inbox = outer_inbox;
         layout.run(if (self.hits_enabled) hit_regions else null, ctx);
     }
 };
@@ -1208,7 +1229,7 @@ const Layout = struct {
         }
     }
 
-    fn longestWord(font: Atom, str: []const u8, ctx: *roop.Context) f32 {
+    fn longestWord(font: roop.Font, str: []const u8, ctx: *roop.Context) f32 {
         var mx: f32 = 0;
         var it = std.mem.tokenizeScalar(u8, str, ' ');
         while (it.next()) |word| {
@@ -2748,7 +2769,7 @@ test "custom borrows mutable and const drawables until commit and replaces rect 
     ctx.translate(7, 9);
     const original_transform = ctx.currentTransform();
     const original_count = ctx.states.items.len;
-    tree.commit(.{ .root_size = .{ .x = 100, .y = 80 } }, &ctx, null);
+    tree.commit(.{ .root_size = .{ .x = 100, .y = 80 } }, &ctx, null, no_inbox);
     try testing.expectEqual(original_count, ctx.states.items.len);
     try testing.expectEqual(original_transform, ctx.currentTransform());
     try testing.expectEqual(@as(usize, 1), mutable.calls);
@@ -2913,7 +2934,7 @@ test "custom paint order borrowed updates reset and caller state isolation" {
     tree.rect(id, .{ .size = .{ .w = .{ .fixed = 8 }, .h = .{ .fixed = 8 } }, .bg = .{ .r = 1, .g = 0, .b = 0, .a = 1 } });
     tree.endRect();
     const cfg = Config{ .root_size = .{ .x = 100, .y = 40 }, .origin = .{ .x = 10, .y = 20 }, .offset = .{ .x = 100, .y = 200 } };
-    tree.commit(cfg, &ctx, null);
+    tree.commit(cfg, &ctx, null, no_inbox);
     try testing.expectEqual(@as(usize, 1), probe.seen_calls[0]);
     try testing.expectEqual(@as(usize, 3), ctx.calls.items.len);
     try testing.expectEqual(math.Vec2f{ .x = 20, .y = 12 }, probe.sizes[0]);
@@ -2941,13 +2962,13 @@ test "custom paint order borrowed updates reset and caller state isolation" {
     try testing.expectEqual(initial, ctx.states.items[0]);
     try testing.expectEqual(roop.CompositeOperation.source_over, ctx.composite_op);
     probe.value = 42;
-    tree.commit(cfg, &ctx, null);
+    tree.commit(cfg, &ctx, null, no_inbox);
     try testing.expectEqual(@as(f32, 42), probe.seen_value[1]);
     try testing.expectEqual(@as(usize, 4), probe.seen_calls[1]);
     try testing.expectEqual(@as(f32, 0.7), probe.seen_alpha[1]);
     try testing.expectEqual(@as(usize, 6), ctx.calls.items.len);
     tree.reset();
-    tree.commit(cfg, &ctx, null);
+    tree.commit(cfg, &ctx, null, no_inbox);
     try testing.expectEqual(@as(usize, 2), probe.calls);
 }
 
@@ -3001,7 +3022,7 @@ test "custom inherited clip and hit regions preserve rect semantics" {
     var ctx = customTestContext(&ctx_allocator, &renderer);
     ctx.scissor(0, 0, 55, 100, 9);
     const caller_state = ctx.states.items[0];
-    tree.commit(.{ .root_size = .{ .x = 100, .y = 100 }, .origin = .{ .x = 10, .y = 20 }, .offset = .{ .x = 100, .y = 200 }, .depth = 7 }, &ctx, hits);
+    tree.commit(.{ .root_size = .{ .x = 100, .y = 100 }, .origin = .{ .x = 10, .y = 20 }, .offset = .{ .x = 100, .y = 200 }, .depth = 7 }, &ctx, hits, no_inbox);
     try testing.expectEqual(@as(usize, 3), probe.count);
     try testing.expectEqual(math.Vec2f{ .x = 50, .y = 30 }, probe.sizes[0]);
     try testing.expectEqual([2]f32{ 15, 20 }, probe.scissor_extents[0]);
@@ -3315,7 +3336,7 @@ test "chart drawable custom commit uses live data and reports errors" {
     tree.custom(.{ id, @as(u64, 3) }, &scatter_chart, params);
     tree.endRect();
     const config = Config{ .root_size = .{ .x = 120, .y = 40 }, .origin = .{ .x = 10, .y = 20 } };
-    tree.commit(config, &ctx, null);
+    tree.commit(config, &ctx, null, no_inbox);
     try testing.expectEqual(@as(usize, 5), ctx.calls.items.len);
     try testing.expectEqual(@as(?chart.Error, null), line_chart.last_error);
     try testing.expectEqual(@as(?chart.Error, null), bar_chart.last_error);
@@ -3330,14 +3351,14 @@ test "chart drawable custom commit uses live data and reports errors" {
 
     try table.writeFieldSingle(i32, first_row, "y", 20);
     const next_point = ctx.gpu_points.items.len;
-    tree.commit(config, &ctx, null);
+    tree.commit(config, &ctx, null, no_inbox);
     try testing.expectApproxEqAbs(@as(f32, 10), ctx.gpu_points.items[next_point].x, 0.01);
     try testing.expectApproxEqAbs(@as(f32, 20), ctx.gpu_points.items[next_point].y, 0.01);
     line_chart.options.padding = 30;
-    tree.commit(config, &ctx, null);
+    tree.commit(config, &ctx, null, no_inbox);
     try testing.expectEqual(@as(?chart.Error, error.InvalidBounds), line_chart.last_error);
     line_chart.options.padding = 0;
-    tree.commit(config, &ctx, null);
+    tree.commit(config, &ctx, null, no_inbox);
     try testing.expectEqual(@as(?chart.Error, null), line_chart.last_error);
     // The slice backing storage and drawable both survive all commits.
     var runtime_storage = [_]Atom{ atoms.intern("x"), atoms.intern("y") };
@@ -3346,13 +3367,13 @@ test "chart drawable custom commit uses live data and reports errors" {
     _ = tree.beginRect(id, .{ .size = .{ .w = .{ .fixed = 40 }, .h = .{ .fixed = 40 } } });
     tree.custom(.{ id, @as(u64, 4) }, &runtime_chart, params);
     tree.endRect();
-    tree.commit(config, &ctx, null);
+    tree.commit(config, &ctx, null, no_inbox);
     try testing.expectEqual(@as(?chart.Error, null), runtime_chart.last_error);
     runtime_storage[1] = atoms.intern("unknown");
-    tree.commit(config, &ctx, null);
+    tree.commit(config, &ctx, null, no_inbox);
     try testing.expectEqual(@as(?chart.Error, error.UnknownField), runtime_chart.last_error);
     runtime_storage[1] = atoms.intern("y");
-    tree.commit(config, &ctx, null);
+    tree.commit(config, &ctx, null, no_inbox);
     try testing.expectEqual(@as(?chart.Error, null), runtime_chart.last_error);
 }
 

@@ -23,13 +23,25 @@ const authoring = @import("table_authoring.zig");
 const action_palette = @import("action_palette.zig");
 const status_bar = @import("status_bar.zig");
 const inspector = @import("inspector.zig");
-const workspaces = @import("workspaces.zig");
+const fixed_panels = @import("fixed_panels.zig");
+const buffer_list = @import("buffer_list.zig");
+const figure_workspace = @import("figure/workspace.zig");
 const shared = @import("text_editor.zig");
 const modes = @import("modes.zig");
 const style = @import("ui/style.zig");
 const button = @import("ui/button.zig");
 const sequencer = mesha.sequencer;
 const editor_sequencer = @import("editor_sequencer.zig");
+const profiler = @import("profiler/profiler.zig");
+const text_panel = @import("text_panel.zig");
+const open_mod = @import("open.zig");
+const text_tools = @import("text_tools.zig");
+const runner = @import("vcs/runner.zig");
+const git_status = @import("vcs/git_status.zig");
+const p4_status = @import("vcs/p4_status.zig");
+const plugin_list = @import("plugin_list.zig");
+const sources = @import("document/sources.zig");
+const transient = @import("transient.zig");
 
 pub const kMaxWindows: u32 = 32;
 pub const kPickerOwner: Atom = Atom.from("editor.windows.picker");
@@ -106,11 +118,6 @@ const window_field_count = 30;
 pub const WindowState = struct {
     id: *Atom,
     instance: *Atom,
-    /// The arrangement the window was last shown in (`workspaces.arrangementCount`): its
-    /// panel is declared while that is the current one, so a window closes when a workspace
-    /// is arranged and stays known, with its view, until it is opened again. 0 for one never
-    /// shown.
-    shown_in: *u32,
     /// The panel the window opens beside, the one that asked for it; none for the window's
     /// edge.
     open_beside: *Atom,
@@ -175,16 +182,18 @@ pub fn init(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables: *Table.R
     try action_palette.ensure(scratch, atoms, tables);
     try authoring.ensureTables(scratch, atoms, tables);
     try status_bar.ensure(scratch, atoms, tables);
-    try @import("profiler/profiler.zig").ensure(scratch, atoms, tables);
-    try @import("text_panel.zig").ensure(scratch, atoms, tables);
-    try @import("open.zig").ensure(scratch, atoms, tables);
-    try @import("workspaces.zig").ensure(scratch, atoms, tables);
-    try @import("text_tools.zig").ensure(scratch, atoms, tables);
-    try @import("vcs/runner.zig").ensure(scratch, atoms, tables);
-    try @import("vcs/git_status.zig").ensure(scratch, atoms, tables);
-    try @import("vcs/p4_status.zig").ensure(scratch, atoms, tables);
-    try @import("document/sources.zig").ensure(scratch, atoms, tables);
-    try @import("transient.zig").ensure(scratch, atoms, tables);
+    try profiler.ensure(scratch, atoms, tables);
+    try text_panel.ensure(scratch, atoms, tables);
+    try open_mod.ensure(scratch, atoms, tables);
+    try fixed_panels.ensure(scratch, atoms, tables);
+    try buffer_list.ensure(scratch, atoms, tables);
+    try text_tools.ensure(scratch, atoms, tables);
+    try runner.ensure(scratch, atoms, tables);
+    try git_status.ensure(scratch, atoms, tables);
+    try p4_status.ensure(scratch, atoms, tables);
+    try plugin_list.ensure(scratch, atoms, tables);
+    try sources.ensure(scratch, atoms, tables);
+    try transient.ensure(scratch, atoms, tables);
     try modes.ensurePanelModes(scratch, atoms, tables, panel_modes_table_name);
     try modes.ensurePromptModes(scratch, atoms, tables, prompt_modes_table_name);
     try editor_sequencer.ensure(scratch, atoms, tables);
@@ -198,7 +207,6 @@ pub fn init(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables: *Table.R
     windows_schema.addField("instance", Atom, .atom);
     windows_schema.addField("viewport_w", f32, .int);
     windows_schema.addField("viewport_h", f32, .int);
-    windows_schema.addField("shown_in", u32, .int);
     windows_schema.addField("open_beside", Atom, .atom);
     windows_schema.addField("inspector_scroll", u32, .int);
     windows_schema.addField("inspector_horizontal_scroll", u32, .int);
@@ -993,14 +1001,8 @@ fn windowPanel(atoms: *Atom.Registry, id: Atom) plugin.panels.Open {
     return .{ .id = id, .title = table_name, .root = inspector.inspector_root, .side = .right, .share = 0.4 };
 }
 
-/// Shows `s`'s window in the current arrangement: beside the focused panel when it is not
-/// open, and with the focus either way.
-fn showWindow(tables: *Table.Registry, atoms: *Atom.Registry, s: WindowState) void {
-    const current = workspaces.arrangementCount(tables);
-    if (s.shown_in.* != current) {
-        s.shown_in.* = current;
-        s.open_beside.* = workspaces.requester(tables, atoms);
-    }
+/// Gives `s`'s window the focus, which it takes as it opens when it is new.
+fn showWindow(tables: *Table.Registry, s: WindowState) void {
     plugin.panels.request(tables.memory, tables, .{ .focus = .{ .id = s.id.* } });
 }
 
@@ -1015,8 +1017,7 @@ pub fn open(tables: *Table.Registry, atoms: *Atom.Registry, table_handle: Table.
         const handle: Table.RowHandle = .{ .row = row, .generation = list.rowGeneration(row) };
         const existing = list.getRow(handle, WindowState).?;
         if (existing.id.* == target.name) {
-            // Window lifetime is global; explicit open adds it to the arrangement again.
-            showWindow(tables, atoms, existing);
+            showWindow(tables, existing);
             return true;
         }
     }
@@ -1026,8 +1027,9 @@ pub fn open(tables: *Table.Registry, atoms: *Atom.Registry, table_handle: Table.
     const s = list.getRow(handle, WindowState).?;
     s.id.* = target.name;
     s.instance.* = target.name;
-    s.shown_in.* = 0;
-    showWindow(tables, atoms, s);
+    // Beside the focused panel, which asked for it.
+    s.open_beside.* = fixed_panels.requester(tables, atoms);
+    showWindow(tables, s);
 
     s.viewport_w.* = 640;
     s.viewport_h.* = 480;
@@ -1198,7 +1200,7 @@ fn windowFromPayload(list: *Table, received: sequencer.Message) ?WindowRef {
 
 const kDrawerWidth: f32 = 320;
 const kDrawerMinBody: f32 = 300;
-const kFormRowHeight: f32 = 30;
+const kFormRowHeight: f32 = style.metric.field_height;
 
 fn drawerOpenFor(authoring_ui: state.AuthoringUiView, instance: Atom) bool {
     if (@as(state.DrawerMode, @enumFromInt(authoring_ui.drawer_mode.*)) == .none) return false;
@@ -1640,17 +1642,16 @@ fn takeWindowsMessage(memory: *memory_mod.Memory, scratch: memory_mod.Scratch, t
                 const fhandle = focusedHandle(tables, atoms) orelse {
                     const id = state.viewFocus(tables, atoms).id.*;
                     // Another plugin's panel, a game's among them, is its plugin's to
-                    // declare: the editor only hides it, until `panels_show_hidden` or the
-                    // app workspace shows it again.
+                    // declare: the editor only hides it, until `panels_show_hidden` shows it
+                    // again.
                     const no_panel: Atom = @enumFromInt(0);
-                    if (id != no_panel and !workspaces.ownsPanel(tables, atoms, id)) {
+                    if (id != no_panel and !fixed_panels.ownsPanel(tables, atoms, id)) {
                         plugin.panels.request(tables.memory, tables, .{ .hide = .{ .id = id } });
                         return true;
                     }
                     // Not a table window: a fixed panel (a panel of the figure editor's, the
-                    // profiler, a widget), which is no longer shown. The last one closed
-                    // brings back the workspace's arrangement.
-                    workspaces.hidePanel(tables, id);
+                    // profiler, a widget), which is no longer shown.
+                    fixed_panels.hidePanel(tables, id);
                     return true;
                 };
                 break :blk WindowRef{ .handle = fhandle, .state = list.getRow(fhandle, WindowState).? };
@@ -1967,8 +1968,10 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
         plugin.panels.commands_table_name,
         plugin.text_editor_api.commands_table_name,
         // Closing a fixed panel that has the focus (a stage, a panel of the figure
-        // editor's) takes its row from those shown.
-        workspaces.shown_panels_table_name,
+        // editor's) takes its row from those shown; the stage asks the figure editor to put
+        // down what it was doing.
+        fixed_panels.shown_panels_table_name,
+        figure_workspace.commands_table_name,
         // Each window shown is a panel the system declares.
         plugin.panels.declared_table_name,
     };
@@ -1980,10 +1983,10 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
         if (tables.findByName(atom) != null) result.write(atom);
     }
     result.read(Atom.from(action_palette.table_name));
-    // Which arrangement is current: a window shown in an earlier one is closed.
-    if (tables.findByName(Atom.from(workspaces.workspace_table_name)) != null) result.read(Atom.from(workspaces.workspace_table_name));
     modes.declarePanelModes(&result, tables, panel_modes_table_name);
     modes.declarePromptModes(&result, tables, prompt_modes_table_name);
+    // Which windows a panel took the place of, whose rows go.
+    if (tables.findByName(Atom.from(panels_mod.replaced_table_name)) != null) result.read(Atom.from(panels_mod.replaced_table_name));
     // The sizes the panels tell, which the windows' grids settle at.
     plugin.panels.Events.declare(&result, tables, plugin.panels.events_table_name);
     const list = tables.findByName(Atom.from(state.windows_name)) orelse return result;
@@ -2079,23 +2082,32 @@ fn seedSizes(tables: *Table.Registry, atoms: *Atom.Registry, list: *Table) void 
     }
 }
 
-/// Declares a panel for each window shown in the current arrangement, as the panels system
-/// follows them: one shown this frame opens beside the panel that asked for it, taking the
-/// focus, and one whose row went, or that an arrangement left behind, closes.
+/// Declares a panel for each window, as the panels system follows them: one made this frame
+/// opens beside the panel that asked for it, taking the focus, and one whose row went closes.
+/// A window another panel took the place of (`panels_mod.wasReplaced`), as a figure opened
+/// over it, loses its row.
 fn declareWindows(pass: *sequencer.Pass) !void {
     const declared = Atom.from(plugin.panels.declared_table_name);
     if (!pass.writes(declared)) return;
     const frame = pass.frame;
-    const current = workspaces.arrangementCount(frame.tables);
-    const list = try pass.table(Atom.from(state.windows_name));
+    const list = try pass.writeTable(Atom.from(state.windows_name));
+    var replaced: [kMaxWindows]Table.RowHandle = undefined;
+    var replaced_count: usize = 0;
     var rows = list.readQuery(WindowState);
     while (rows.next()) |found| {
         const row = found.view;
-        if (row.shown_in.* != current) continue;
+        if (panels_mod.wasReplaced(frame.tables, frame.atoms, row.id.*)) {
+            if (replaced_count < replaced.len) {
+                replaced[replaced_count] = found.handle;
+                replaced_count += 1;
+            }
+            continue;
+        }
         var panel = windowPanel(frame.atoms, row.id.*);
         panel.beside = row.open_beside.*;
         plugin.panels.declare(frame.memory, frame.tables, panel);
     }
+    for (replaced[0..replaced_count]) |handle| list.free(handle);
 }
 
 /// The keys and typing the focused window takes now, through the system's input subscriber.
@@ -2666,7 +2678,6 @@ pub fn prepareInit(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tables: *
         "instance",
         "viewport_w",
         "viewport_h",
-        "shown_in",
         "open_beside",
         "inspector_scroll",
         "inspector_horizontal_scroll",
@@ -2730,16 +2741,18 @@ fn prepareWindowsTables(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tabl
     try action_palette.prepareInit(scratch, atoms, tables);
     try authoring.ensureTables(scratch, atoms, tables);
     try status_bar.prepareInit(scratch, atoms, tables);
-    try @import("profiler/profiler.zig").prepareInit(scratch, atoms, tables);
-    try @import("text_panel.zig").ensure(scratch, atoms, tables);
-    try @import("open.zig").ensure(scratch, atoms, tables);
-    try @import("workspaces.zig").ensure(scratch, atoms, tables);
-    try @import("text_tools.zig").ensure(scratch, atoms, tables);
-    try @import("vcs/runner.zig").ensure(scratch, atoms, tables);
-    try @import("vcs/git_status.zig").ensure(scratch, atoms, tables);
-    try @import("vcs/p4_status.zig").ensure(scratch, atoms, tables);
-    try @import("document/sources.zig").ensure(scratch, atoms, tables);
-    try @import("transient.zig").ensure(scratch, atoms, tables);
+    try profiler.prepareInit(scratch, atoms, tables);
+    try text_panel.ensure(scratch, atoms, tables);
+    try open_mod.ensure(scratch, atoms, tables);
+    try fixed_panels.ensure(scratch, atoms, tables);
+    try buffer_list.ensure(scratch, atoms, tables);
+    try text_tools.ensure(scratch, atoms, tables);
+    try runner.ensure(scratch, atoms, tables);
+    try git_status.ensure(scratch, atoms, tables);
+    try p4_status.ensure(scratch, atoms, tables);
+    try plugin_list.ensure(scratch, atoms, tables);
+    try sources.ensure(scratch, atoms, tables);
+    try transient.ensure(scratch, atoms, tables);
     try modes.ensurePanelModes(scratch, atoms, tables, panel_modes_table_name);
     try modes.ensurePromptModes(scratch, atoms, tables, prompt_modes_table_name);
     try editor_sequencer.ensure(scratch, atoms, tables);
@@ -2753,7 +2766,6 @@ fn prepareWindowsTables(scratch: memory_mod.Scratch, atoms: *Atom.Registry, tabl
     try windows_schema.addFieldFallible("instance", Atom, .atom);
     try windows_schema.addFieldFallible("viewport_w", f32, .int);
     try windows_schema.addFieldFallible("viewport_h", f32, .int);
-    try windows_schema.addFieldFallible("shown_in", u32, .int);
     try windows_schema.addFieldFallible("open_beside", Atom, .atom);
     try windows_schema.addFieldFallible("inspector_scroll", u32, .int);
     try windows_schema.addFieldFallible("inspector_horizontal_scroll", u32, .int);

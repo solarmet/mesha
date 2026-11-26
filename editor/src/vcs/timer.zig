@@ -9,11 +9,11 @@ const Atom = mesha.Atom;
 const Table = mesha.Table;
 const sequencer = mesha.sequencer;
 const keybinds = mesha.keybinds;
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 
 const os_window_table = Atom.from(mesha.os.window_table_name);
 const settings_table = Atom.from(keybinds.editor_settings_name);
-const shown_panels_table = Atom.from(workspaces.shown_panels_table_name);
+const shown_panels_table = Atom.from(fixed_panels.shown_panels_table_name);
 const time_commands = Atom.from(mesha.time.commands_table_name);
 const time_state = Atom.from(mesha.time.state_table_name);
 

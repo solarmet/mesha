@@ -12,14 +12,11 @@ const style = @import("ui/style.zig");
 const roop = mesha.roop;
 const keybinds = mesha.keybinds;
 const text_editor = @import("text_editor.zig");
-const Log = mesha.log.scope("editor");
-const workspaces = @import("workspaces.zig");
+const fixed_panels = @import("fixed_panels.zig");
 const modes = @import("modes.zig");
 pub const inspector = @import("inspector.zig");
-const panels_mod = mesha.panels;
 const panel_frame = @import("panel_frame.zig");
 pub const figure_workspace = @import("figure/workspace.zig");
-
 pub const table_view = @import("table_view.zig");
 pub const windows = @import("windows.zig");
 pub const action_palette = @import("action_palette.zig");
@@ -31,15 +28,35 @@ pub const vcs_git = @import("vcs/git_status.zig");
 pub const vcs_p4 = @import("vcs/p4_status.zig");
 pub const text_tools = @import("text_tools.zig");
 pub const plugins = @import("plugins.zig");
+pub const plugin_list = @import("plugin_list.zig");
 pub const transient = @import("transient.zig");
 const editor_sequencer = @import("editor_sequencer.zig");
 pub const authoring = @import("table_authoring.zig");
 pub const state = @import("state.zig");
+const git_log = @import("vcs/git_log.zig");
+const git_rebase = @import("vcs/git_rebase.zig");
+const git_diff = @import("vcs/git_diff.zig");
+const git_commit = @import("vcs/git_commit.zig");
+const p4_history = @import("vcs/p4_history.zig");
+const p4_diff = @import("vcs/p4_diff.zig");
+const p4_change = @import("vcs/p4_change.zig");
+const stage_mod = @import("stage.zig");
+const context_menu = @import("figure/context_menu.zig");
+const motion = @import("figure/motion.zig");
+const chrome = @import("figure/chrome.zig");
+const canvas = @import("figure/canvas.zig");
+const color_picker = @import("figure/color_picker.zig");
+const panels = @import("figure/panels.zig");
+const git_status_view = @import("vcs/git_status_view.zig");
+const p4_status_view = @import("vcs/p4_status_view.zig");
+const tests = @import("tests.zig");
+const Log = mesha.log.scope("editor");
+const panels_mod = mesha.panels;
 
 /// This file's profile zones, in its log scope.
 const Zone = enum { render_canvas };
 
-/// The editor as a whole: its focus, workspaces, action palette and prompts. A panel draws
+/// The editor as a whole: its focus, action palette and prompts. A panel draws
 /// again when systems under its root change a table; no panel has this root, so the editor's
 /// own systems draw none, and what they change in a module's panel reaches that module as a
 /// message of its own.
@@ -76,31 +93,52 @@ fn queueActionListRequest(memory: *memory_mod.Memory, tables: *Table.Registry) v
     action_palette.request(memory, tables, .{ .present = .{ .completions = completions, .reply = reply } });
 }
 
-fn focusClicksShouldBeDisabled(tables: *Table.Registry, atoms: *Atom.Registry) bool {
-    return action_palette.requestOpen(tables, atoms) or windows.isFormEditing(tables, atoms);
+/// Whether a click may move the focus, and where the keyboard is when it may not: the editor's
+/// record of it (`state.ViewFocusView.focus_clicks_disabled`) keeps its value.
+const FocusClicks = enum(u8) {
+    /// A click focuses the panel under it.
+    enabled = 0,
+    /// Suspended for a field in the focused panel: an inline prompt or a form.
+    field = 1,
+    /// Suspended for the minibuffer, which has the keyboard.
+    minibuffer = 2,
+};
+
+fn focusClicksWanted(tables: *Table.Registry, atoms: *Atom.Registry) FocusClicks {
+    if (action_palette.minibufferHasKeyboard(tables, atoms)) return .minibuffer;
+    if (action_palette.requestOpen(tables, atoms) or windows.isFormEditing(tables, atoms)) return .field;
+    return .enabled;
 }
 
-/// Tells the panels whether a click may move the focus.
-fn requestFocusClicks(tables: *Table.Registry, disabled: bool) !void {
-    const wanted: plugin.panels.CmdPayload = if (disabled) .disable_focus_clicks else .enable_focus_clicks;
+/// Tells the panels whether a click may move the focus, and where the keyboard is.
+fn requestFocusClicks(tables: *Table.Registry, wanted: FocusClicks) !void {
+    const request: plugin.panels.CmdPayload = switch (wanted) {
+        .enabled => .enable_focus_clicks,
+        .field => .{ .disable_focus_clicks = .{ .keyboard = .focused_panel } },
+        .minibuffer => .{ .disable_focus_clicks = .{ .keyboard = .outside_panels } },
+    };
     const requests = plugin.panels.Requests.of(tables.memory, tables, plugin.panels.commands_table_name);
-    try requests.tryPush(wanted);
+    try requests.tryPush(request);
+}
+
+/// The focus clicks the editor last told the panels, as it recorded them.
+fn recordedFocusClicks(focus: state.ViewFocusView) FocusClicks {
+    return std.enums.fromInt(FocusClicks, focus.focus_clicks_disabled.*) orelse .field;
 }
 
 pub fn initializeFocusClicks(tables: *Table.Registry, atoms: *Atom.Registry) void {
-    const disabled = focusClicksShouldBeDisabled(tables, atoms);
-    state.viewFocus(tables, atoms).focus_clicks_disabled.* = @intFromBool(disabled);
-    requestFocusClicks(tables, disabled) catch |err| Log.err("focus_clicks_request_failed", .{ .@"error" = @errorName(err) });
+    const wanted = focusClicksWanted(tables, atoms);
+    state.viewFocus(tables, atoms).focus_clicks_disabled.* = @intFromEnum(wanted);
+    requestFocusClicks(tables, wanted) catch |err| Log.err("focus_clicks_request_failed", .{ .@"error" = @errorName(err) });
 }
 
 pub fn syncFocusClicks(tables: *Table.Registry, atoms: *Atom.Registry) void {
     const focus = state.viewFocus(tables, atoms);
-    const disabled = focusClicksShouldBeDisabled(tables, atoms);
-    const disabled_value: u8 = @intFromBool(disabled);
-    if (focus.focus_clicks_disabled.* == disabled_value) return;
+    const wanted = focusClicksWanted(tables, atoms);
+    if (recordedFocusClicks(focus) == wanted) return;
     // Recorded only once appended, so a refused request is tried again by the next sync.
-    requestFocusClicks(tables, disabled) catch return;
-    focus.focus_clicks_disabled.* = disabled_value;
+    requestFocusClicks(tables, wanted) catch return;
+    focus.focus_clicks_disabled.* = @intFromEnum(wanted);
 }
 
 /// The editor's command hook: a palette command is the palette's; an answer one of the editor's
@@ -133,53 +171,12 @@ const volume_up_tag: Atom = Atom.from("volume_up");
 const volume_down_tag: Atom = Atom.from("volume_down");
 const subtitles_toggle_tag: Atom = Atom.from("subtitles_toggle");
 
-/// The fonts the editor draws with, from its own `assets/fonts/` (`editor_plugin`), loaded in
-/// the application scope at its first update: `ui`'s `default`, the icon fonts, the `font_*`
-/// sizes and the text panels'. Panel chrome the host draws uses `font_17` and `icon_row`.
-const ui_fonts = blk: {
-    const regular = "fonts/OpenSans-Regular.ttf";
-    const mono = "fonts/RobotoMonoNerdFontMono-Regular.ttf";
-    const font_mod = mesha.font;
-    break :blk [_]resources.ResourceDecl{
-        .{ .name = resources.kDefaultFontName, .kind = .font, .path = regular, .pixel_height = 18 },
-        .{ .name = resources.kIconFontName, .kind = .font, .path = mono, .pixel_height = 16, .glyph_first_char = 0xF060, .glyph_codepoints = &font_mod.legacy_icon_codepoints },
-        .{ .name = resources.kRailIconFontName, .kind = .font, .path = mono, .pixel_height = font_mod.kRailIconPixelHeight, .glyph_codepoints = &font_mod.rail_icon_codepoints },
-        .{ .name = resources.kRowIconFontName, .kind = .font, .path = mono, .pixel_height = font_mod.kRowIconPixelHeight, .glyph_codepoints = &font_mod.rail_icon_codepoints },
-        .{ .name = resources.kFont11Name, .kind = .font, .path = regular, .pixel_height = 11 },
-        .{ .name = resources.kFont12Name, .kind = .font, .path = regular, .pixel_height = 12 },
-        .{ .name = resources.kFont13Name, .kind = .font, .path = regular, .pixel_height = 13 },
-        .{ .name = resources.kFont14Name, .kind = .font, .path = regular, .pixel_height = 14 },
-        .{ .name = resources.kFont17Name, .kind = .font, .path = regular, .pixel_height = 17 },
-        .{ .name = resources.kFont20Name, .kind = .font, .path = regular, .pixel_height = 20 },
-        .{ .name = resources.kFont22Name, .kind = .font, .path = regular, .pixel_height = 22 },
-        .{ .name = resources.kFont24Name, .kind = .font, .path = regular, .pixel_height = 24 },
-        .{ .name = resources.kFont32Name, .kind = .font, .path = regular, .pixel_height = 32 },
-        .{ .name = resources.kIcon24Name, .kind = .font, .path = mono, .pixel_height = 24, .glyph_first_char = 61536 },
-    } ++ text_panel_fonts;
-};
-
-/// The plugin whose directory the editor's fonts are in: its own.
-const editor_plugin = Atom.from("editor");
-
-/// The text panels' fonts at each size they zoom to: ASCII, and beside it the characters
-/// past ASCII it draws.
-const text_panel_fonts = blk: {
-    const mono = "fonts/RobotoMonoNerdFontMono-Regular.ttf";
-    var decls: [2 * text_panel.text_sizes.len]resources.ResourceDecl = undefined;
-    for (text_panel.text_sizes, 0..) |size, index| {
-        decls[2 * index] = .{ .name = size.font, .kind = .font, .path = mono, .pixel_height = size.pixel_height };
-        decls[2 * index + 1] = .{ .name = size.extra_font, .kind = .font, .path = mono, .pixel_height = size.pixel_height, .glyph_codepoints = &text_panel.extra_codepoints };
-    }
-    break :blk decls;
-};
-
 pub const editor_actions = [_]plugin.action_api.Def{
     .{ .name = "create_tracker", .tag = "create_tracker", .doc = "Create a runtime tracker" },
     .{ .name = "delete_tracker", .tag = "delete_tracker", .doc = "Delete the focused tracker" },
     .{ .name = "picker_toggle", .tag = "picker_toggle", .doc = "Open the table picker" },
     .{ .name = "action_palette_toggle", .tag = "action_palette_toggle", .doc = "Search actions" },
 
-    .{ .name = "show_world", .tag = "show_world", .doc = "Activate the App workspace (legacy alias)" },
     .{ .name = "window_close", .tag = "window_close", .doc = "Close the focused panel" },
 
     .{ .name = "add", .tag = "ctx_add", .doc = "Add row / metadata entry (context)" },
@@ -198,7 +195,7 @@ pub const editor_actions = [_]plugin.action_api.Def{
     .{ .name = "meta_save", .tag = "meta_save", .doc = "Commit the metadata form" },
     .{ .name = "meta_cancel_edit", .tag = "meta_cancel_edit", .doc = "Cancel the metadata form" },
     .{ .name = "cancel", .tag = "cancel", .doc = "Cancel editing" },
-} ++ figure_workspace.actions ++ workspaces.actions ++ inspector.actions ++ profiler.actions ++ text_panel.actions ++ open.actions ++ text_tools.actions ++ plugins.actions ++ vcs_git.actions ++ vcs_p4.actions;
+} ++ figure_workspace.actions ++ fixed_panels.actions ++ inspector.actions ++ profiler.actions ++ text_panel.actions ++ open.actions ++ text_tools.actions ++ plugins.actions ++ plugin_list.actions ++ vcs_git.actions ++ vcs_p4.actions;
 
 /// The keys of the editor's own `global` actions, by Emacs's conventions.
 pub const global_keys = [_]keybinds.KeyDef{
@@ -269,23 +266,26 @@ const default_keymaps = [_]keybinds.KeymapDef{
     .{ .mode = plugin.action_api.global_mode, .rank = .default, .keys = &inspector.global_keys },
     .{ .mode = plugin.action_api.global_mode, .rank = .default, .keys = &text_tools.global_keys },
     .{ .mode = plugin.action_api.global_mode, .rank = .default, .keys = &vcs_git.global_keys },
+    .{ .mode = plugin.action_api.global_mode, .rank = .default, .keys = &plugin_list.global_keys },
     .{ .mode = modes.vcs, .rank = .default, .keys = &vcs_git.vcs_keys },
     .{ .mode = modes.vcs_git, .rank = .default, .keys = &vcs_git.vcs_git_keys },
-    .{ .mode = modes.vcs_log, .rank = .default, .keys = &@import("vcs/git_log.zig").log_keys },
-    .{ .mode = modes.vcs_rebase, .rank = .default, .keys = &@import("vcs/git_rebase.zig").rebase_keys },
-    .{ .mode = modes.vcs_git_diff, .rank = .default, .keys = &@import("vcs/git_diff.zig").keys },
-    .{ .mode = modes.vcs_message, .rank = .default, .keys = &@import("vcs/git_commit.zig").message_keys },
+    .{ .mode = modes.vcs_log, .rank = .default, .keys = &git_log.log_keys },
+    .{ .mode = modes.vcs_rebase, .rank = .default, .keys = &git_rebase.rebase_keys },
+    .{ .mode = modes.vcs_git_diff, .rank = .default, .keys = &git_diff.keys },
+    .{ .mode = modes.vcs_message, .rank = .default, .keys = &git_commit.message_keys },
     .{ .mode = plugin.action_api.global_mode, .rank = .default, .keys = &vcs_p4.global_keys },
     .{ .mode = modes.vcs_p4, .rank = .default, .keys = &vcs_p4.vcs_p4_keys },
-    .{ .mode = modes.vcs_p4_history, .rank = .default, .keys = &@import("vcs/p4_history.zig").history_keys },
-    .{ .mode = modes.vcs_p4_diff, .rank = .default, .keys = &@import("vcs/p4_diff.zig").keys },
-    .{ .mode = modes.vcs_p4_message, .rank = .default, .keys = &@import("vcs/p4_change.zig").message_keys },
+    .{ .mode = modes.vcs_p4_history, .rank = .default, .keys = &p4_history.history_keys },
+    .{ .mode = modes.vcs_p4_diff, .rank = .default, .keys = &p4_diff.keys },
+    .{ .mode = modes.vcs_p4_message, .rank = .default, .keys = &p4_change.message_keys },
+    .{ .mode = modes.plugin_list, .rank = .default, .keys = &plugin_list.list_keys },
     .{ .mode = modes.table, .rank = .default, .keys = &table_keys },
     .{ .mode = modes.form, .rank = .default, .keys = &windows.form_keys },
     .{ .mode = modes.table_cell, .rank = .default, .keys = &windows.table_cell_keys },
     .{ .mode = modes.prompt, .rank = .default, .keys = &action_palette.prompt_keys },
     .{ .mode = modes.isearch, .rank = .default, .keys = &text_panel.isearch_keys },
     .{ .mode = modes.figure, .rank = .default, .keys = &figure_workspace.figure_keys },
+    .{ .mode = modes.figure_cua, .rank = .default, .keys = &figure_workspace.figure_cua_keys },
     .{ .mode = modes.text, .rank = .default, .keys = &text_editor.text_keys },
     .{ .mode = modes.buffer, .rank = .default, .keys = &text_panel.buffer_keys },
     .{ .mode = modes.cua, .rank = .default, .keys = &text_editor.cua_keys },
@@ -344,7 +344,7 @@ fn prepareKeymaps(memory: *memory_mod.Memory, atoms: *Atom.Registry) !PreparedKe
     const arena = try scope.createArena();
     const allocator = arena.allocator();
     const editor_keymaps = try buildKeymaps(allocator, atoms);
-    const stage_keymap = try @import("stage.zig").buildKeymap(allocator, atoms);
+    const stage_keymap = try stage_mod.buildKeymap(allocator, atoms);
     return .{
         .scope = scope,
         .record = record,
@@ -429,8 +429,9 @@ fn actionSystem(def: plugin.action_api.Def, name: []const u8, cancel_owner: Canc
     if (definesTag(&vcs_git.actions, def.tag)) return vcs_git.system();
     if (definesTag(&vcs_p4.actions, def.tag)) return vcs_p4.system();
     if (definesAction(&plugins.actions, name)) return plugins.system();
+    if (definesTag(&plugin_list.actions, def.tag)) return plugin_list.system();
     if (definesAction(&inspector.actions, name)) return inspector.system();
-    if (definesAction(&workspaces.actions, name) or std.mem.eql(u8, name, "show_world")) return workspaces.system();
+    if (definesAction(&fixed_panels.actions, name)) return fixed_panels.system();
     if (std.mem.eql(u8, name, "action_palette_toggle")) return messagesSystem();
     return windows.system();
 }
@@ -454,18 +455,17 @@ fn isFigureAction(name: []const u8) bool {
 }
 
 /// Actions about the whole window rather than one panel, which answer wherever the focus is:
-/// the action palette and picker, moving between and arranging panels, switching workspaces,
-/// and opening or closing what the focused panel shows.
+/// the action palette and picker, moving between and arranging panels, and opening or closing what the focused panel shows.
 fn isWindowAction(name: []const u8) bool {
     const exact = [_][]const u8{
-        "action_palette_toggle", "picker_toggle",      "focus_next_view", "maximize_toggle", "window_close",
-        "show_world",            "figure_open",        "figure_new",      "text_find_file",  "open",
-        "text_toggle_keymap",    "panels_show_hidden", "vcs_git_status",  "vcs_p4_status",   "vcs_status",
+        "action_palette_toggle", "picker_toggle",  "focus_next_view", "maximize_toggle", "window_close",
+        "figure_open",           "figure_new",     "text_find_file",  "open",            "text_toggle_keymap",
+        "panels_show_hidden",    "vcs_git_status", "vcs_p4_status",   "vcs_status",      "plugins_show",
     };
     for (exact) |candidate| {
         if (std.mem.eql(u8, name, candidate)) return true;
     }
-    const prefixes = [_][]const u8{ "workspace_", "panel_dock_", "inspector_", "profiler_toggle" };
+    const prefixes = [_][]const u8{ "panel_dock_", "inspector_", "profiler_toggle" };
     for (prefixes) |prefix| {
         if (std.mem.startsWith(u8, name, prefix)) return true;
     }
@@ -474,7 +474,7 @@ fn isWindowAction(name: []const u8) bool {
 
 pub fn pushEditorActions(tables: *Table.Registry, atoms: *Atom.Registry, sink: plugin.ActionSink) void {
     const focus = state.viewFocus(tables, atoms).id.*;
-    const app_view_focused = focus != @as(Atom, @enumFromInt(0)) and !workspaces.ownsPanel(tables, atoms, focus);
+    const app_view_focused = focus != @as(Atom, @enumFromInt(0)) and !fixed_panels.ownsPanel(tables, atoms, focus);
     const editor_view_focused = focus != @as(Atom, @enumFromInt(0)) and !app_view_focused;
     const action_palette_input = action_palette.requestOpen(tables, atoms);
     const form_editing = windows.isFormEditing(tables, atoms);
@@ -495,18 +495,18 @@ pub fn pushEditorActions(tables: *Table.Registry, atoms: *Atom.Registry, sink: p
         if (isFormAction(known_name) and !form_editing) continue;
         if (requiresFocusedView(known_name) and !focused_view) continue;
         if (std.mem.eql(u8, known_name, "delete_tracker") and !windows.focusedTracker(tables, atoms)) continue;
-        if (isFigureAction(known_name) and (workspaces.activeWorkspace(tables, atoms) != .figure or !figure_workspace.isFigureView(focus))) continue;
+        if (isFigureAction(known_name) and (!figure_workspace.stageShown(tables) or !figure_workspace.isFigureView(focus))) continue;
         // A focused text panel lists these itself (`text_panel.panel_actions`).
         if (text_panel.listsActions(tables, atoms) and std.mem.eql(u8, known_name, "text_switch_buffer")) continue;
         if (text_panel.listsActions(tables, atoms) and std.mem.eql(u8, known_name, "text_select_window")) continue;
         if (text_panel.listsActions(tables, atoms) and std.mem.eql(u8, known_name, "text_recent_files")) continue;
 
-        const workspace_action = std.mem.startsWith(u8, known_name, "workspace_") or std.mem.startsWith(u8, known_name, "inspector_") or std.mem.startsWith(u8, known_name, "profiler_") or std.mem.eql(u8, known_name, "show_world") or std.mem.eql(u8, known_name, "stage_show");
+        const panel_action = std.mem.startsWith(u8, known_name, "inspector_") or std.mem.startsWith(u8, known_name, "profiler_") or std.mem.eql(u8, known_name, "panels_show_hidden") or std.mem.eql(u8, known_name, "stage_show");
         const creation_action = std.mem.eql(u8, known_name, "figure_open") or std.mem.eql(u8, known_name, "figure_new") or std.mem.eql(u8, known_name, "create_tracker") or std.mem.eql(u8, known_name, "text_find_file") or std.mem.eql(u8, known_name, "open") or std.mem.eql(u8, known_name, "text_toggle_keymap");
         // Action palette completion closes the prompt before invoking the selected
-        // action. Workspace actions must remain available in the App context, and so must
-        // those a key reaches there.
-        if (app_context and !workspace_action and !creation_action and !hasDefaultKey(atoms, mode, def.name)) continue;
+        // action. Actions that show panels must remain available while another plugin's panel
+        // has the focus, and so must those a key reaches there.
+        if (app_context and !panel_action and !creation_action and !hasDefaultKey(atoms, mode, def.name)) continue;
         var action_def = def;
         // Window actions answer from any panel; the rest only while one of the editor's panels
         // has the focus.
@@ -529,6 +529,7 @@ pub fn pushEditorActions(tables: *Table.Registry, atoms: *Atom.Registry, sink: p
     text_panel.pushActions(tables, atoms, sink);
     vcs_git.pushActions(atoms, sink);
     vcs_p4.pushActions(atoms, sink);
+    plugin_list.pushActions(atoms, sink);
 }
 
 pub fn init(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Registry) !void {
@@ -551,14 +552,62 @@ pub fn init(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Re
 }
 
 /// The editor's requests to resources as it starts: the table index, whose answer is the table
-/// windows', and the fonts its UI draws with.
+/// windows', and the fonts text falls back to. Its own fonts load as they are first drawn.
 fn requestStartupResources(tables: *Table.Registry) void {
     const memory = tables.memory;
-    const scope = resources.applicationScope(memory);
     const index_reply = windows.replyTo(.table_index);
     resources.request(memory, tables, .{ .refresh_table_index = .{ .reply = index_reply } });
-    for (ui_fonts) |font| resources.request(memory, tables, .{ .load_resource = .{ .scope = scope, .decl = font, .plugin = editor_plugin } });
+    resources.request(memory, tables, .{ .set_fallback_fonts = .{ .paths = fallback_font_paths } });
 }
+
+/// The system's fonts text falls back to for a character the editor's fonts lack: Latin,
+/// Greek and Cyrillic beyond the editor's, the CJK ideographs and kana, then the other scripts,
+/// symbols and emoji, in that order. Candidates for each platform's usual install; those a
+/// machine lacks are passed over. The CJK fonts are TrueType or CFF ones, as stb_truetype
+/// reads no CFF2, which Fedora's variable Noto CJK is; Droid Sans Fallback has no Hangul, so
+/// Korean needs Nanum or a static Noto Sans KR.
+const fallback_font_paths = switch (builtin.os.tag) {
+    .windows =>
+    \\C:/Windows/Fonts/segoeui.ttf
+    \\C:/Windows/Fonts/YuGothR.ttc
+    \\C:/Windows/Fonts/msgothic.ttc
+    \\C:/Windows/Fonts/msyh.ttc
+    \\C:/Windows/Fonts/malgun.ttf
+    \\C:/Windows/Fonts/simsun.ttc
+    \\C:/Windows/Fonts/Nirmala.ttf
+    \\C:/Windows/Fonts/tahoma.ttf
+    \\C:/Windows/Fonts/seguisym.ttf
+    \\C:/Windows/Fonts/seguiemj.ttf
+    ,
+    else =>
+    \\/usr/share/fonts/google-noto/NotoSans-Regular.ttf
+    \\/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf
+    \\/usr/share/fonts/noto/NotoSans-Regular.ttf
+    \\/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc
+    \\/usr/share/fonts/noto-cjk/NotoSansCJK-Regular.ttc
+    \\/usr/share/fonts/google-droid-sans-fonts/DroidSansFallbackFull.ttf
+    \\/usr/share/fonts/naver-nanum/NanumGothic.ttf
+    \\/usr/share/fonts/truetype/nanum/NanumGothic.ttf
+    \\/usr/share/fonts/google-noto-sans-kr-fonts/NotoSansKR-Regular.otf
+    \\/usr/share/fonts/opentype/noto/NotoSansKR-Regular.otf
+    \\/usr/share/fonts/truetype/droid/DroidSansFallbackFull.ttf
+    \\/usr/share/fonts/google-noto-vf/NotoSansArabic[wght].ttf
+    \\/usr/share/fonts/truetype/noto/NotoSansArabic-Regular.ttf
+    \\/usr/share/fonts/google-noto-vf/NotoSansHebrew[wght].ttf
+    \\/usr/share/fonts/truetype/noto/NotoSansHebrew-Regular.ttf
+    \\/usr/share/fonts/google-noto-vf/NotoSansDevanagari[wght].ttf
+    \\/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf
+    \\/usr/share/fonts/google-noto-vf/NotoSansThai[wght].ttf
+    \\/usr/share/fonts/truetype/noto/NotoSansThai-Regular.ttf
+    \\/usr/share/fonts/google-noto/NotoSansSymbols2-Regular.ttf
+    \\/usr/share/fonts/truetype/noto/NotoSansSymbols2-Regular.ttf
+    \\/usr/share/fonts/google-noto-vf/NotoSansSymbols[wght].ttf
+    \\/usr/share/fonts/google-noto-emoji-fonts/NotoEmoji-Regular.ttf
+    \\/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf
+    \\/usr/share/fonts/gdouros-symbola/Symbola.ttf
+    \\/usr/share/fonts/truetype/ancient-scripts/Symbola_hint.ttf
+    ,
+};
 
 /// What the editor's init left for its first update, once its admission committed:
 /// the focus clicks it recorded, the registration of its modes, and its requests to resources.
@@ -568,15 +617,14 @@ fn sendPendingStartupRequests(tables: *Table.Registry, atoms: *Atom.Registry) vo
     const focus = state.viewFocus(tables, atoms);
     if (focus.startup_requests_pending.* == 0) return;
     focus.startup_requests_pending.* = 0;
-    const disabled = focus.focus_clicks_disabled.* != 0;
-    requestFocusClicks(tables, disabled) catch |err| Log.err("focus_clicks_request_failed", .{ .@"error" = @errorName(err) });
+    requestFocusClicks(tables, recordedFocusClicks(focus)) catch |err| Log.err("focus_clicks_request_failed", .{ .@"error" = @errorName(err) });
     modes.registerAll(tables);
     requestStartupResources(tables);
 }
 
 fn modalActive(tables: *Table.Registry, atoms: *Atom.Registry) bool {
     return windows.isTextEditing(tables, atoms) or windows.isFormEditing(tables, atoms) or
-        action_palette.requestOpen(tables, atoms) or figure_workspace.contextMenuOpen(@import("figure/context_menu.zig").get(tables));
+        action_palette.requestOpen(tables, atoms) or figure_workspace.contextMenuOpen(context_menu.get(tables));
 }
 
 pub const action_selected_tag = plugin.action_api.kActionSelectedTag;
@@ -589,8 +637,8 @@ fn actionListShows(tables: *Table.Registry, atoms: *Atom.Registry, query: []cons
     for (shown.entries, entries) |completion, entry| {
         const selected = std.mem.bytesToValue(ActionSelectionData, completion.data[0..@sizeOf(ActionSelectionData)]);
         if (!std.mem.eql(Atom, &selected.id, &entry.id)) return false;
-        const shown_label = if (entry.doc.len != 0) entry.doc else entry.label;
-        if (!std.mem.eql(u8, completion.label, shown_label)) return false;
+        // The id names the label; the description may change with a reload.
+        if (!std.mem.eql(u8, completion.detail, entry.doc)) return false;
     }
     return true;
 }
@@ -640,8 +688,8 @@ pub fn showActionList(memory: *memory_mod.Memory, tables: *Table.Registry, atoms
         var data = std.mem.zeroes([action_palette.kCompletionDataSize]u8);
         const selected = ActionSelectionData{ .id = entry.id };
         @memcpy(data[0..@sizeOf(ActionSelectionData)], std.mem.asBytes(&selected));
-        // Named as a person reads it; the action's own name stays searchable beside it. The
-        // prompt's modes are active while it is open, so the key is read from the keymap of the
+        // Named by its id, as text writes an action, with what it does beside it. The prompt's
+        // modes are active while it is open, so the key is read from the keymap of the
         // action's own mode, active or not.
         const found_shortcut = shortcuts.text(entry.id[0], entry.id) orelse "";
         const shortcut = allocator.dupe(u8, found_shortcut) catch return;
@@ -649,9 +697,9 @@ pub fn showActionList(memory: *memory_mod.Memory, tables: *Table.Registry, atoms
         const formatted_id = plugin.action_api.formatId(&id_buffer, atoms, entry.id);
         const id_text = allocator.dupe(u8, formatted_id) catch return;
         entries[i] = .{
-            .key = shortcut,
-            .label = if (entry.doc.len != 0) entry.doc else entry.label,
-            .detail = if (entry.doc.len != 0) id_text else "",
+            .label = id_text,
+            .detail = entry.doc,
+            .shortcut = shortcut,
             .data = data,
             // As Emacs's M-x completes to the command's name, which the list is narrowed by.
             .completes_to = entry.label,
@@ -761,7 +809,7 @@ fn followFocus(tables: *Table.Registry, atoms: *Atom.Registry, move: plugin.pane
         .unfocused => |id| {
             const leaving_figure = figure_workspace.isFigureView(id) and
                 !figure_workspace.isFigureView(panels_mod.focusedTarget(tables, atoms).id);
-            if (leaving_figure and workspaces.activeWorkspace(tables, atoms) == .figure) figure_workspace.focusLost(tables, atoms);
+            if (leaving_figure and figure_workspace.stageShown(tables)) figure_workspace.focusLost(tables, atoms);
             if (!action_palette.requestOpen(tables, atoms) and !windows.isFormEditing(tables, atoms)) {
                 state.clearViewFocus(tables, atoms, id);
             }
@@ -785,7 +833,7 @@ pub fn updateMessage(memory: *memory_mod.Memory, tables: *Table.Registry, atoms:
         return true;
     }
     // A figure glide stepped; the stage draws the cell it moved.
-    if (tag.to(@import("figure/motion.zig").Msg) == .figure_motion_update) return true;
+    if (tag.to(motion.Msg) == .figure_motion_update) return true;
     // The figure editor's systems take their own messages. What reaches it here is the
     // editor's: the generic `cancel` while a figure panel has the keys, the clicks and wheel
     // over its drawing that none of its systems claims, and hover changes over its panels.
@@ -871,7 +919,7 @@ fn declareSubscriptions(pass: *sequencer.Pass) !void {
     if (!pass.writes(editor_sequencer.ActionDeclarer.table)) return;
     var declarer: editor_sequencer.ActionDeclarer = .{ .pass = pass };
     const sink = declarer.sink();
-    if (app_present) @import("stage.zig").declareActions(atoms, sink);
+    if (app_present) stage_mod.declareActions(atoms, sink);
     windows.declareActions(tables, atoms, sink);
     pushEditorActions(tables, atoms, sink);
 }
@@ -972,9 +1020,9 @@ fn messagesAccess(frame: *const sequencer.Frame) sequencer.Access {
     for (asked) |name| result.writeIfPresent(tables, Atom.from(name));
     // The modes the palette found as it opened, which an action picked from it is judged by.
     readIfPresent(&result, tables, Atom.from(action_palette.prompt_modes_table_name));
-    // The figure editor's `cancel` and hover, while its workspace is up.
+    // The figure editor's `cancel` and hover, while its stage is shown.
     const heard = frame.messages.len != 0;
-    if (heard and workspaces.activeWorkspace(tables, frame.atoms) == .figure) {
+    if (heard and figure_workspace.stageShown(tables)) {
         figure_workspace.table_groups.declareEditing(&result);
         // Escape's `cancel` drops a press waiting for its answer.
         figure_workspace.table_groups.declareAsking(&result, tables);
@@ -1027,42 +1075,44 @@ fn requestRootRedraw(tables: *Table.Registry, atoms: *Atom.Registry, root: Atom)
 /// stage holds the figure editor and its context menu; the profiler and widgets each fill
 /// their own. A panel that is none of the editor's, another plugin's, is left to its plugin.
 pub fn renderPanel(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *Atom.Registry, id: Atom, frame: plugin.Viewport, ctx: *roop.Context) void {
-    if (!workspaces.ownsPanel(tables, atoms, id)) return;
-    if (id == atoms.intern(workspaces.figure_stage)) {
+    if (!fixed_panels.ownsPanel(tables, atoms, id)) return;
+    if (id == atoms.intern(fixed_panels.figure_stage)) {
         const trace_zone = Log.zone(Zone.render_canvas);
         defer trace_zone.end();
         var header: panel_frame.Header = undefined;
         if (header.begin(memory, tables, atoms, id)) {
-            if (header.open) @import("figure/chrome.zig").renderDecoration(&header.tree, tables);
+            if (header.open) chrome.renderDecoration(&header.tree, tables);
             header.finish(tables, atoms, frame, ctx);
         }
         const viewport = panel_frame.beginContent(tables, atoms, id, frame, ctx) orelse return;
         defer panel_frame.endContent(ctx);
         ctx.fontFace(style.ui_font);
-        const canvas_result = @import("figure/canvas.zig").render(memory, tables, atoms, viewport, ctx);
-        @import("figure/chrome.zig").render(memory, tables, atoms, viewport, ctx, canvas_result);
-        @import("figure/color_picker.zig").render(memory, tables, atoms, viewport, ctx);
-        @import("figure/context_menu.zig").render(memory, tables, atoms, viewport, kModalDepth + 2, ctx);
+        const canvas_result = canvas.render(memory, tables, atoms, viewport, ctx);
+        chrome.render(memory, tables, atoms, viewport, ctx, canvas_result);
+        color_picker.render(memory, tables, atoms, viewport, ctx);
+        context_menu.render(memory, tables, atoms, viewport, kModalDepth + 2, ctx);
         return;
     }
     if (id == atoms.intern(figure_workspace.outliner_id) or id == atoms.intern(figure_workspace.inspector_id)) {
-        @import("figure/panels.zig").render(memory, tables, atoms, id, frame, ctx, state.hitRegions(tables, atoms), kHitDepth);
+        panels.render(memory, tables, atoms, id, frame, ctx, state.hitRegions(tables, atoms), kHitDepth);
         return;
     }
     if (id == atoms.intern(figure_workspace.sequencer_id)) {
-        @import("figure/panels.zig").renderTimeline(memory, tables, atoms, frame, ctx);
+        panels.renderTimeline(memory, tables, atoms, frame, ctx);
         return;
     }
     if (id == atoms.intern(profiler.panel_name)) {
         profiler.render(memory, tables, atoms, frame, ctx);
     } else if (id == vcs_git.panel) {
-        @import("vcs/git_status_view.zig").render(memory, tables, atoms, frame, ctx);
-    } else if (id == @import("vcs/git_diff.zig").panel) {
-        @import("vcs/git_diff.zig").render(memory, tables, atoms, frame, ctx);
+        git_status_view.render(memory, tables, atoms, frame, ctx);
+    } else if (id == git_diff.panel) {
+        git_diff.render(memory, tables, atoms, frame, ctx);
     } else if (id == vcs_p4.panel) {
-        @import("vcs/p4_status_view.zig").render(memory, tables, atoms, frame, ctx);
-    } else if (id == @import("vcs/p4_diff.zig").panel) {
-        @import("vcs/p4_diff.zig").render(memory, tables, atoms, frame, ctx);
+        p4_status_view.render(memory, tables, atoms, frame, ctx);
+    } else if (id == p4_diff.panel) {
+        p4_diff.render(memory, tables, atoms, frame, ctx);
+    } else if (id == plugin_list.panel) {
+        plugin_list.render(memory, tables, atoms, frame, ctx);
     } else if (text_panel.isPanel(id)) {
         text_panel.render(memory, tables, atoms, id, frame, ctx);
     } else if (inspector.isPanel(tables, atoms, id)) {
@@ -1120,7 +1170,7 @@ test "the editor's first update registers each of its modes once, and a second r
 test {
     _ = inspector;
     _ = text_editor;
-    _ = @import("tests.zig");
+    _ = tests;
 }
 
 pub const EditorInitCheckpoint = enum { atoms, windows, completions, action_palette, session, drawing, weight, pose, filmstrip, prompts, workspace, commands };
@@ -1230,7 +1280,7 @@ pub const PreparedEditorInit = struct {
     startup_requests_pending: *u8,
     /// The transient menu's row, whose menu an earlier image showed is lost as the plan applies.
     transient_menu: transient.Lost,
-    disabled: bool,
+    focus_clicks_wanted: FocusClicks,
     reject_commands: bool,
     /// The editor's keymaps, built, which `apply` installs.
     keymaps: PreparedKeymaps,
@@ -1269,7 +1319,7 @@ pub const PreparedEditorInit = struct {
     pub fn apply(self: *PreparedEditorInit) void {
         if (!self.validated or self.applied) @panic("editor.init.unvalidated_or_repeated_apply");
         self.applied = true;
-        self.focus_clicks.* = @intFromBool(self.disabled);
+        self.focus_clicks.* = @intFromEnum(self.focus_clicks_wanted);
         self.startup_requests_pending.* = 1;
         transient.loseMenu(self.transient_menu);
         self.keymaps.install();
@@ -1319,7 +1369,7 @@ pub fn prepareEditorInit(memory: *memory_mod.Memory, atoms: *Atom.Registry, tabl
         .focus_clicks = focus.focus_clicks_disabled,
         .startup_requests_pending = focus.startup_requests_pending,
         .transient_menu = transient.lostFields(tables),
-        .disabled = focusClicksShouldBeDisabled(tables, atoms),
+        .focus_clicks_wanted = focusClicksWanted(tables, atoms),
         .reject_commands = options.reject_after == .commands,
         .keymaps = keymaps,
     };
@@ -1391,7 +1441,8 @@ test "editor preparation checkpoints preserve warm prompt form capture selection
     try std.testing.expect(tables.commitInitAdmission(tab));
     try std.testing.expect(memory.commitInitAdmission(mem));
     accepted.apply();
-    try std.testing.expectEqual(@as(u8, 1), focus.focus_clicks_disabled.*);
+    // The prompt open is the minibuffer's.
+    try std.testing.expectEqual(@as(u8, 2), focus.focus_clicks_disabled.*);
     // The startup requests wait for the editor's first update, past admission.
     try std.testing.expectEqual(@as(u8, 1), focus.startup_requests_pending.*);
     try std.testing.expectEqual(Atom.from("custom_focus"), focus.id.*);
@@ -1472,8 +1523,8 @@ test "editor preparation provisional cleanup terminal defaults and stale validat
     try std.testing.expectEqual(@as(usize, 1), told.len);
     try std.testing.expect(told[0] == .enable_focus_clicks);
     const requested = resources.Requests.of(&memory, &tables, resources.commands_table_name).count();
-    // The table index and the fonts.
-    try std.testing.expectEqual(@as(u32, 1 + ui_fonts.len), requested);
+    // The table index and the fallback fonts.
+    try std.testing.expectEqual(@as(u32, 2), requested);
     try std.testing.expectEqual(@as(u8, 0), focus.startup_requests_pending.*);
     sendPendingStartupRequests(&tables, &atoms);
     try std.testing.expectEqual(requested, resources.Requests.of(&memory, &tables, resources.commands_table_name).count());

@@ -32,6 +32,7 @@ const editor_state = @import("../state.zig");
 const style = @import("../ui/style.zig");
 const document = @import("../document/document.zig");
 const document_view = @import("../document/view.zig");
+const editor_sequencer = @import("../editor_sequencer.zig");
 
 /// The panel's row as the draw reads it; null without it.
 pub fn stateOf(tables: *Table.Registry) ?model.StateRead {
@@ -138,7 +139,7 @@ fn commitTree(tree: *ui.Tree, tables: *Table.Registry, atoms: *Atom.Registry, vi
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .hovered = editor_state.hoveredElementId(tables),
         .depth = panels_mod.kPanelHitDepth,
-    }, ctx, editor_state.hitRegions(tables, atoms));
+    }, ctx, editor_state.hitRegions(tables, atoms), editor_sequencer.redrawInbox());
 }
 
 /// What the header adds after the title: while a job of the panel's runs, at its right, the

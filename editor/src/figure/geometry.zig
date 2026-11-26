@@ -6,12 +6,14 @@ const Atom = mesha.Atom;
 const panels_mod = mesha.panels;
 const figure = mesha.figure;
 const session = @import("session.zig");
+const metric = style.metric;
+const style = @import("../ui/style.zig");
 
 // The figure stage's chrome and its usable canvas share this policy with global input bounds.
 // Layers, Properties and the sequencer are panels of their own beside it.
-pub const header_height: f32 = 40;
-pub const options_height: f32 = 34;
-const status_height: f32 = 28;
+pub const header_height: f32 = metric.bar_height;
+pub const options_height: f32 = metric.bar_height;
+const status_height: f32 = metric.line_bar_height;
 
 pub const StageLayout = struct {
     header: panels_mod.Rect = .{},
@@ -153,7 +155,7 @@ test "drawing stage layout shares local and global camera bounds and fit" {
     const local = stageLayout(.{ .w = stage.w, .h = stage.h }, .{});
     // The whole stage's width, below the header and options and above the status line;
     // Layers and Properties are panels of their own.
-    const expected = panels_mod.Rect{ .x = 120, .y = 124, .w = 900, .h = 548 };
+    const expected = panels_mod.Rect{ .x = 120, .y = 130, .w = 900, .h = 538 };
     try std.testing.expectEqualDeep(expected, global.canvas);
     try std.testing.expectEqual(global.canvas.x, local.canvas.x + stage.x);
     try std.testing.expectEqual(global.canvas.y, local.canvas.y + stage.y);

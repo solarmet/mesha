@@ -24,6 +24,14 @@ const workspace = @import("workspace.zig");
 const asks = @import("asks.zig");
 const view = @import("view.zig");
 const preview = @import("preview.zig");
+const transport_fixture = @import("transport_fixture.zig");
+const action_palette = @import("../action_palette.zig");
+const fixed_panels = @import("../fixed_panels.zig");
+const commands_mod = @import("commands.zig");
+const weight = @import("weight.zig");
+const names_mod = @import("names.zig");
+const prompts = @import("prompts.zig");
+const context_menu = @import("context_menu.zig");
 
 const Operation = std.meta.Tag(figure.Payload);
 
@@ -31,7 +39,7 @@ const Fixture = struct {
     mem: memory.Memory = undefined,
     atoms: Atom.Registry = undefined,
     tables: Table.Registry = undefined,
-    transport: @import("transport_fixture.zig").Transport = undefined,
+    transport: transport_fixture.Transport = undefined,
     doc: Atom = m.none,
 
     fn init(f: *Fixture, name: []const u8) !void {
@@ -41,14 +49,14 @@ const Fixture = struct {
         try f.transport.init(&f.mem, &f.atoms, &f.tables);
         const scratch = try f.mem.tableScratchAllocator();
         try editor_state.ensureViewFocus(scratch, &f.atoms, &f.tables);
-        try @import("../action_palette.zig").ensure(scratch, &f.atoms, &f.tables);
+        try action_palette.ensure(scratch, &f.atoms, &f.tables);
         const HoverState = struct { hovered_id: [16]u8 = @splat(0) };
         _ = try session.ensureSingleton(HoverState, &f.mem, &f.atoms, &f.tables, editor_state.app_state_name);
         const stage = f.atoms.intern(workspace.canvas_id);
         panels_mod.relayout(&f.tables, &f.atoms, .{ .w = 1920, .h = 1080 });
-        // The editor's record of the active workspace, which arranging one sets.
-        try @import("../workspaces.zig").ensure(scratch, &f.atoms, &f.tables);
-        @import("../workspaces.zig").arrangeNow(&f.tables, &f.atoms, .figure);
+        // The editor's fixed panels, the figure stage shown among them.
+        try fixed_panels.ensure(scratch, &f.atoms, &f.tables);
+        fixed_panels.layOutNow(&f.tables, &f.atoms, .figure_stage);
         editor_state.setViewFocus(&f.tables, &f.atoms, stage);
         // workspace.handle reports figure Msgs by their interned tag names.
         for ([_][]const u8{ "figure_pointer_down", "figure_pointer_move", "figure_pointer_up" }) |tag_name| {
@@ -138,7 +146,7 @@ const Fixture = struct {
 
     /// One frame of the editor's systems.
     fn pump(f: *Fixture) void {
-        @import("transport_fixture.zig").runSystems(&f.mem, &f.atoms, &f.tables);
+        transport_fixture.runSystems(&f.mem, &f.atoms, &f.tables);
     }
 
     /// The host answers what a press asked, and the canvas goes on with it the next frame.
@@ -572,9 +580,9 @@ test "gesture preview rejected begin never edits or cancels foreign transaction"
     var before = try t.snapshot(std.testing.allocator, &f.tables, &f.atoms, f.doc);
     defer before.deinit(std.testing.allocator);
     const context = session.figureContext(&f.tables, &f.atoms);
-    _ = try @import("commands.zig").submit(context, .{ .begin = .{ .doc = f.doc, .label = f.atoms.intern("foreign") } });
+    _ = try commands_mod.submit(context, .{ .begin = .{ .doc = f.doc, .label = f.atoms.intern("foreign") } });
     const items = [_]figure.Selection{.{ .kind = f.atoms.intern("shape"), .id = shape }};
-    _ = try @import("commands.zig").submit(context, .{ .move_selection = .{ .doc = f.doc, .items = &items, .delta = .{ .x = 7, .y = 4 } } });
+    _ = try commands_mod.submit(context, .{ .move_selection = .{ .doc = f.doc, .items = &items, .delta = .{ .x = 7, .y = 4 } } });
     try f.drain(false);
     try f.expectOffset(before, .{ .x = 7, .y = 4 });
     try f.down(.{ .x = 27, .y = 24 });
@@ -589,7 +597,7 @@ test "gesture preview rejected begin never edits or cancels foreign transaction"
     try f.expectSettled();
     try f.expectOffset(before, .{ .x = 7, .y = 4 });
     try std.testing.expect(session.definitionInfo(&f.tables, &f.atoms, f.doc).?.transaction_open);
-    _ = try @import("commands.zig").submit(context, .{ .commit = .{ .doc = f.doc } });
+    _ = try commands_mod.submit(context, .{ .commit = .{ .doc = f.doc } });
     try f.drain(false);
 }
 
@@ -603,7 +611,7 @@ test "gesture preview pending activation blocks press and key releases survive b
     try f.preparePreview();
     const context = session.figureContext(&f.tables, &f.atoms);
     const next = f.atoms.intern("gesture_activation_new");
-    _ = try @import("commands.zig").submit(context, .{ .new_doc = .{ .scope = mesha.resources.applicationScope(context.memory), .doc = next } });
+    _ = try commands_mod.submit(context, .{ .new_doc = .{ .scope = mesha.resources.applicationScope(context.memory), .doc = next } });
     var figure_commands: figure_runtime.HostTransport.HostContext = .{ .host = &f.transport.host };
     try figure_runtime.HostTransport.dispatch(&figure_commands);
     try f.down(.{ .x = 20, .y = 20 });
@@ -715,7 +723,6 @@ test "drawing pencil pointer delivery grouping preserves fitted path and history
 }
 
 fn weightEquivalenceRun(delivery: SampleDelivery) !m.Document {
-    const weight = @import("weight.zig");
     var f: Fixture = .{};
     try f.init("weight_equivalence");
     defer f.deinit();
@@ -737,7 +744,7 @@ fn weightEquivalenceRun(delivery: SampleDelivery) !m.Document {
     editor.prompt_doc.* = f.doc;
     editor.prompt_id.* = b1;
     editor.prompt_target_kind.* = f.atoms.intern("bone");
-    _ = try weight.submitPrompt(&f.tables, &f.atoms, @import("names.zig").test_rotation, "45");
+    _ = try weight.submitPrompt(&f.tables, &f.atoms, names_mod.test_rotation, "45");
     weight.pickBone(weight.config(&f.tables), session.get(&f.tables), b2);
     try f.preparePreview();
     f.pump();
@@ -770,7 +777,7 @@ fn weightEquivalenceRun(delivery: SampleDelivery) !m.Document {
     try std.testing.expect(lock_rows.next() == null);
     selection.clear(session.get(&f.tables), session.observed(&f.tables), session.selections(&f.tables));
     _ = try weight.handleAction(&f.tables, &f.atoms, f.atoms.intern("figure_weight_lock"));
-    try std.testing.expect(weight.locked(@import("weight.zig").boneStates(&f.tables), b2));
+    try std.testing.expect(weight.locked(weight.boneStates(&f.tables), b2));
     try std.testing.expect(!f.selected(shape));
     if (delivery == .individual) {
         for (0..3) |_| {
@@ -816,7 +823,6 @@ fn weightEquivalenceRun(delivery: SampleDelivery) !m.Document {
 }
 
 test "weight first press only selects and strokes skip an anchor's only bone" {
-    const weight = @import("weight.zig");
     var f: Fixture = .{};
     try f.init("weight_targeting");
     defer f.deinit();
@@ -869,7 +875,6 @@ test "weight pointer delivery grouping preserves posed stroke and history" {
 }
 
 fn setupWeightFailureFixture(f: *Fixture, shape_count: usize) !void {
-    const weight = @import("weight.zig");
     _ = try commands.apply(&f.atoms, &f.tables, .{ .add_bone = .{ .doc = f.doc, .length = 40, .make_stroke = false } });
     const bone = (try commands.apply(&f.atoms, &f.tables, .{ .add_bone = .{ .doc = f.doc, .length = 40, .make_stroke = false } })).?;
     const editor = session.get(&f.tables);
@@ -893,7 +898,6 @@ fn setupWeightFailureFixture(f: *Fixture, shape_count: usize) !void {
 }
 
 fn expectWeightSnapshotCleared(f: *Fixture) !void {
-    const weight = @import("weight.zig");
     const state = weight.stroke(&f.tables);
     try std.testing.expectEqual(@as(u32, 0), state.count.*);
     try std.testing.expectEqual(@as(u32, 0), state.shape_count.*);
@@ -908,7 +912,6 @@ fn expectWeightSnapshotCleared(f: *Fixture) !void {
 }
 
 test "weight stroke schemas support complete runtime table inspection" {
-    const weight = @import("weight.zig");
     const rpc = mesha_runtime.mcp.table_rpc;
     var f: Fixture = .{};
     try f.init("weight_schema");
@@ -922,7 +925,6 @@ test "weight stroke schemas support complete runtime table inspection" {
 }
 
 test "weight saturated in-flight batch drains then rolls back" {
-    const weight = @import("weight.zig");
     var f: Fixture = .{};
     try f.init("weight_saturation");
     defer f.deinit();
@@ -959,7 +961,6 @@ test "weight saturated in-flight batch drains then rolls back" {
 }
 
 test "weight release drains complete batch prefixes before commit" {
-    const weight = @import("weight.zig");
     var f: Fixture = .{};
     try f.init("weight_prefix");
     defer f.deinit();
@@ -1102,7 +1103,7 @@ test "weight rejected foreign begin preserves foreign transaction" {
     var before = try t.snapshot(std.testing.allocator, &f.tables, &f.atoms, f.doc);
     defer before.deinit(std.testing.allocator);
     const context = session.figureContext(&f.tables, &f.atoms);
-    _ = try @import("commands.zig").submit(context, .{ .begin = .{ .doc = f.doc, .label = f.atoms.intern("foreign") } });
+    _ = try commands_mod.submit(context, .{ .begin = .{ .doc = f.doc, .label = f.atoms.intern("foreign") } });
     try f.drain(false);
     const history = f.historyCount();
     try f.down(.{ .x = 10, .y = 10 });
@@ -1121,7 +1122,7 @@ test "weight rejected foreign begin preserves foreign transaction" {
     defer after.deinit(std.testing.allocator);
     try std.testing.expectEqualSlices(m.Point, before.points, after.points);
     try std.testing.expectEqual(history, f.historyCount());
-    _ = try @import("commands.zig").submit(context, .{ .cancel = .{ .doc = f.doc } });
+    _ = try commands_mod.submit(context, .{ .cancel = .{ .doc = f.doc } });
     try f.drain(false);
 }
 
@@ -1172,7 +1173,7 @@ test "preview shows the working pose in Animate and the rest pose in Rig at once
     try std.testing.expect(@abs(posed.bones[0].tip.y) > 20);
     editor.mode.* = f.atoms.intern("rig");
     try f.preparePreview();
-    @import("prompts.zig").status(session.table(&f.tables), session.get(&f.tables), session.feedback(&f.tables), "sentinel");
+    prompts.status(session.table(&f.tables), session.get(&f.tables), session.feedback(&f.tables), "sentinel");
     const rest = try preview.evaluation(&f.tables, &f.atoms);
     try std.testing.expectApproxEqAbs(@as(f32, 0), rest.bones[0].tip.y, 0.0001);
     // The preview changed since the last pick, so the first sync only clears the hover.
@@ -1401,7 +1402,6 @@ test "drawing preview Select shares hover press priority in Rig and a marquee ga
     _ = workspace.handle(&f.mem, &f.tables, &f.atoms, next);
     try std.testing.expectEqual(shape_kind, editor.active_kind.*);
     try std.testing.expectEqual(bone, editor.active_bone.*);
-    const prompts = @import("prompts.zig");
     const shape_fields = prompts.inspectorFields(shape_kind);
     session.observed(&f.tables).key_panel.* = f.atoms.intern(workspace.inspector_id);
     editor.inspector_field.* = @intCast(shape_fields.len - 1);
@@ -1456,7 +1456,6 @@ test "context menu closes on dismiss even though its tags are not interned" {
     var f: Fixture = .{};
     try f.init("context_menu_dismiss");
     defer f.deinit();
-    const context_menu = @import("context_menu.zig");
     context_menu.open(context_menu.get(&f.tables), .canvas, 10, 10);
     const dismiss: mesha.sequencer.Message = .{ .tag = Atom.from(workspace.Msg.figure_menu_dismiss) };
     const handled = workspace.handle(&f.mem, &f.tables, &f.atoms, dismiss);

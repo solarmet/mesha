@@ -47,9 +47,10 @@ const open = @import("../open.zig");
 const panel_frame = @import("../panel_frame.zig");
 const text_panel = @import("../text_panel.zig");
 const transient = @import("../transient.zig");
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const editor_state = @import("../state.zig");
 const style = @import("../ui/style.zig");
+const editor_sequencer = @import("../editor_sequencer.zig");
 
 // ---- the panel -----------------------------------------------------------------------------------
 
@@ -58,7 +59,7 @@ pub const panel_name = "vcs_p4_diff";
 /// The panel's id, as an atom.
 pub const panel = Atom.from(panel_name);
 
-/// The panel, a fixed panel the workspaces system declares while it is shown: at the left of
+/// The panel, a fixed panel `fixed_panels` declares while it is shown: at the left of
 /// the changelists panel, half of the space they share, taking the focus.
 pub const fixed_panel: plugin.panels.Open = .{
     .id = panel,
@@ -268,7 +269,7 @@ pub const DiffRow = struct {
 const panel_table = Atom.from(panel_table_name);
 const folds_table = Atom.from(folds_table_name);
 const diffs_table = Atom.from(diffs_table_name);
-const shown_panels_table = Atom.from(workspaces.shown_panels_table_name);
+const shown_panels_table = Atom.from(fixed_panels.shown_panels_table_name);
 const font_metrics_table = Atom.from(resources.font_metrics_table_name);
 
 /// Makes the panel's tables unless they are there: changes no row of one that is.
@@ -338,7 +339,7 @@ pub fn show(work: status.Work, shown: Shown) !void {
     try keep(work, shown, changed);
     try askFor(work, shown, changed);
     const frame = work.pass.frame;
-    workspaces.showPanel(frame.tables, frame.atoms, panel, .arranged, .take);
+    fixed_panels.showPanel(frame.tables, frame.atoms, panel, .arranged, .take);
     try retitle(work);
 }
 
@@ -355,7 +356,7 @@ pub fn follow(work: status.Work, shown: Shown) !void {
 /// Whether the panel is shown: declared, open or about to open.
 pub fn isOpen(pass: *const sequencer.Pass) bool {
     if (!pass.declares(shown_panels_table)) return false;
-    return workspaces.panelShown(pass.frame.tables, panel);
+    return fixed_panels.panelShown(pass.frame.tables, panel);
 }
 
 fn isShowing(work: status.Work, shown: Shown) !bool {
@@ -536,7 +537,7 @@ pub fn forget(work: status.Work) !void {
     row.describe_state.* = @intFromEnum(Asked.none);
     try cells.assignString(row.file_change, "");
     try cells.assignString(row.depot_path, "");
-    workspaces.setPanelTitle(work.tables(), panel, "");
+    fixed_panels.setPanelTitle(work.tables(), panel, "");
 }
 
 /// As a refresh ends: the diff the panel shows a file of, asked again.
@@ -563,7 +564,7 @@ fn retitle(work: status.Work) !void {
         },
         .change => try std.fmt.allocPrint(allocator, "Change {d}", .{row.number.*}),
     };
-    workspaces.setPanelTitle(work.tables(), panel, title);
+    fixed_panels.setPanelTitle(work.tables(), panel, title);
 }
 
 /// A kernel's part of vcs-p4's system: the scroll kept fit to the panel's view as it is
@@ -602,7 +603,7 @@ pub fn take(work: status.Work, received: sequencer.Message) !void {
         .vcs_p4_diff_revert => try revert(work),
         .vcs_p4_diff_no_index => work.tell("Perforce has no index: s in the changelists panel submits"),
         .vcs_p4_diff_refresh => try askAgain(work),
-        .vcs_p4_diff_close => workspaces.hidePanel(work.tables(), panel),
+        .vcs_p4_diff_close => fixed_panels.hidePanel(work.tables(), panel),
         .vcs_p4_diff_process_log => try work.showProcessLog(),
         .vcs_p4_diff_give_up => try work.giveUp(),
         .vcs_p4_diff_menu => {
@@ -1137,5 +1138,5 @@ pub fn render(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *Atom.
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .hovered = editor_state.hoveredElementId(tables),
         .depth = panels_mod.kPanelHitDepth,
-    }, ctx, editor_state.hitRegions(tables, atoms));
+    }, ctx, editor_state.hitRegions(tables, atoms), editor_sequencer.redrawInbox());
 }

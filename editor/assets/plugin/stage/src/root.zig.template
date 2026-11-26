@@ -16,18 +16,14 @@ const journal = mesha.journal;
 const roop = mesha.roop;
 const plugin = mesha.plugin;
 const panels = mesha.panels;
-const resources = mesha.resources;
 
-/// The plugin's name, its directory's, which names its row: the fonts it asks for are read
-/// from that directory's `assets/`.
+/// The plugin's name, its directory's, which names its row.
 const name = Atom.from("@NAME@");
 
-/// The plugin's font: `font_file` in its own `assets/`, at `font_pixel_height`. Font names are
-/// shared by every plugin, so its own begin with its name.
-const text_font_name = "@NAME@_text";
-const text_font = Atom.from(text_font_name);
-const font_file = "fonts/OpenSans-Regular.ttf";
-const font_pixel_height = 32;
+/// The plugin's font: OpenSans in its own `assets/`, 32 pixels tall. It loads the first time
+/// text is drawn in it, which is drawn in the engine's font until then; the plugin's release
+/// unloads it.
+const text_font = ui.Font.init(.{ .plugin = "@NAME@", .path = "fonts/OpenSans-Regular.ttf", .pixel_height = 32 });
 
 const ui_elements = 16;
 const text_color = ui.rgb(240, 236, 226);
@@ -103,20 +99,6 @@ fn ensure(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Regi
     // A system's name names its inbox: one shared with another system would lose messages.
     try sequencer.checkNamesFree(tables, &frame_root.sequencer());
     try sequencer.ensureInboxes(scratch, atoms, tables, &frame_root.sequencer());
-    // Everything the plugin loads is asked for here, at init, as its font is: nothing loads on
-    // first use. Ask for a table document (`request_table`), a figure or a sketch the same way.
-    try requestFont(memory, atoms, tables);
-}
-
-/// Asks resources for the plugin's font, from its own `assets/`. A font already loaded, as when
-/// the plugin reloads in place, is joined, not read again; the plugin's release unloads it.
-/// Until it arrives the text draws nothing.
-fn requestFont(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Registry) !void {
-    // Interned, so the tools read the font's name as text.
-    try atoms.tryInternAll(&.{text_font_name});
-    const scope = resources.applicationScope(memory);
-    const decl: resources.ResourceDecl = .{ .name = text_font, .kind = .font, .path = font_file, .pixel_height = font_pixel_height };
-    resources.request(memory, tables, .{ .load_resource = .{ .scope = scope, .decl = decl, .plugin = name } });
 }
 
 /// Runs once as the plugin is unloaded for good, never for a rebuild: its systems run no
@@ -130,7 +112,7 @@ pub export fn plugin_deinit(memory: *memory_mod.Memory, atoms: *Atom.Registry, t
 
 /// `layer` is the journal layer of the host's run: this plugin's run is its child.
 pub export fn plugin_update(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Registry, layer: *journal.Layer) callconv(.c) void {
-    var context: Context = .{};
+    var context: Context = .{ .tables = tables, .atoms = atoms };
     const env: sequencer.Env = .{
         .memory = memory,
         .atoms = atoms,
@@ -141,17 +123,22 @@ pub export fn plugin_update(memory: *memory_mod.Memory, atoms: *Atom.Registry, t
     _ = sequencer.run(&frame_root.sequencer(), &env, layer);
 }
 
-/// The systems need nothing around their runs.
+/// What the systems need around their runs: the panel drawn again when a run changed a table
+/// or heard something, as when a font it drew before it loaded has loaded.
 const Context = struct {
+    tables: *Table.Registry,
+    atoms: *Atom.Registry,
+
     fn around(context: *anyopaque, system: *const sequencer.System) void {
         _ = context;
         _ = system;
     }
 
     fn finished(context: *anyopaque, system: *const sequencer.System, changed: bool) void {
-        _ = context;
         _ = system;
-        _ = changed;
+        if (!changed) return;
+        const self: *Context = @ptrCast(@alignCast(context));
+        panels.requestRedraw(self.tables, self.atoms, panel_id);
     }
 };
 
@@ -177,7 +164,9 @@ pub export fn plugin_render_panel(memory: *memory_mod.Memory, tables: *Table.Reg
         .offset = .{ .x = frame.x, .y = frame.y },
         .depth = panels.kChromeHitDepth,
     };
-    header.commit(header_config, ctx, tables.findByName(Atom.from(panels.hit_regions_name)));
+    // A font the trees draw in before it loads tells the panel's system, which draws them again.
+    const redraw_inbox = sequencer.inboxOf(panelSystem());
+    header.commit(header_config, ctx, tables.findByName(Atom.from(panels.hit_regions_name)), redraw_inbox);
     ui.panel_header.drawFootLine(ctx, frame.width, if (focused) .focused else .unfocused);
 
     // The plugin's ui, in what the frame has left under the header.
@@ -193,5 +182,5 @@ pub export fn plugin_render_panel(memory: *memory_mod.Memory, tables: *Table.Reg
         tree.text("@NAME@.hello", "Hello from @NAME@", .{ .font = text_font, .color = text_color });
         tree.endRect();
     }
-    tree.commit(config, ctx, null);
+    tree.commit(config, ctx, null, redraw_inbox);
 }

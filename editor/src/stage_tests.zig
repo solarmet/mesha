@@ -18,6 +18,8 @@ const math = mesha.math;
 const app = @import("stage.zig");
 const state_mod = @import("stage_state.zig");
 const hits_mod = @import("hits.zig");
+const editor_sequencer = @import("editor_sequencer.zig");
+const fixed_panels = @import("fixed_panels.zig");
 
 const kScreenW: f32 = app.kScreenW;
 const kScreenH: f32 = app.kScreenH;
@@ -80,7 +82,6 @@ const ScreenDebugCapture = struct {
 /// The window's size as the os system keeps it in `os_window`, then the app stage's run.
 fn resizeWindow(memory: *memory_mod.Memory, atoms: *Atom.Registry, tables: *Table.Registry, width: u32, height: u32) !void {
     const sequencer = mesha.sequencer;
-    const editor_sequencer = @import("editor_sequencer.zig");
     const scratch = try memory.tableScratchAllocator();
     var schema: Table.Schema = undefined;
     try schema.init(scratch.allocator, atoms, 2);
@@ -297,7 +298,7 @@ fn showWorldInGamePanel(memory: *memory_mod.Memory, atoms: *Atom.Registry, table
     table.getRow(row, mesha.world.View).?.panel.* = game_panel.id;
 }
 
-test "the app follows the focus of the panel that shows the world, in any workspace" {
+test "the app follows the focus of the panel that shows the world, beside the figure stage or not" {
     const allocator = std.testing.allocator;
     var atoms: Atom.Registry = undefined;
     var mem: memory_mod.Memory = undefined;
@@ -314,27 +315,26 @@ test "the app follows the focus of the panel that shows the world, in any worksp
     try showWorldInGamePanel(&mem, &atoms, &tables);
 
     const sequencer = mesha.sequencer;
-    const editor_sequencer = @import("editor_sequencer.zig");
     const steps = [_]sequencer.Step{.{ .system = app.system() }};
     const alone: sequencer.Sequencer = .{ .name = "app_stage_test", .steps = &steps };
     try sequencer.ensure(scratch, &atoms, &tables);
     try sequencer.ensureInboxes(scratch, &atoms, &tables, &alone);
     const state = state_mod.app(&tables, &atoms);
     const cases = [_]struct {
-        workspace: @import("workspaces.zig").Workspace,
+        layout: fixed_panels.FixtureLayout,
         focused: []const u8,
         expected_focus: u8,
     }{
-        .{ .workspace = .app, .focused = "stage", .expected_focus = 1 },
+        .{ .layout = .empty, .focused = "stage", .expected_focus = 1 },
         // A panel not open takes no focus: none has it.
-        .{ .workspace = .app, .focused = "figure_outliner", .expected_focus = 0 },
-        .{ .workspace = .app, .focused = "stage", .expected_focus = 1 },
-        .{ .workspace = .figure, .focused = "figure_stage", .expected_focus = 0 },
+        .{ .layout = .empty, .focused = "figure_outliner", .expected_focus = 0 },
+        .{ .layout = .empty, .focused = "stage", .expected_focus = 1 },
+        .{ .layout = .figure_stage, .focused = "figure_stage", .expected_focus = 0 },
         // The game's panel may be open beside the figure editor, and is focused there too.
-        .{ .workspace = .figure, .focused = "stage", .expected_focus = 1 },
+        .{ .layout = .figure_stage, .focused = "stage", .expected_focus = 1 },
     };
     for (cases) |case| {
-        @import("workspaces.zig").arrangeNow(&tables, &atoms, case.workspace);
+        fixed_panels.layOutNow(&tables, &atoms, case.layout);
         panels_mod.openNow(&tables, &atoms, game_panel);
         const panels_state = panels_mod.state(&tables, &atoms);
         panels_state.focus_clicks_enabled.* = 1;
@@ -344,7 +344,7 @@ test "the app follows the focus of the panel that shows the world, in any worksp
     }
 }
 
-test "app subscriptions require a focused Stage in the app workspace" {
+test "app subscriptions require a focused Stage" {
     const allocator = std.testing.allocator;
     var atoms: Atom.Registry = undefined;
     var mem: memory_mod.Memory = undefined;
@@ -368,16 +368,16 @@ test "app subscriptions require a focused Stage in the app workspace" {
     var rows: plugin.ActionRows = .{ .actions = plugin.Actions.of(&mem, &tables, actions_name) };
 
     const cases = [_]struct {
-        workspace: @import("workspaces.zig").Workspace,
+        layout: fixed_panels.FixtureLayout,
         focused: u8,
     }{
-        .{ .workspace = .app, .focused = 0 },
-        .{ .workspace = .app, .focused = 1 },
-        .{ .workspace = .figure, .focused = 1 },
-        .{ .workspace = .app, .focused = 1 },
+        .{ .layout = .empty, .focused = 0 },
+        .{ .layout = .empty, .focused = 1 },
+        .{ .layout = .figure_stage, .focused = 1 },
+        .{ .layout = .empty, .focused = 1 },
     };
     for (cases) |case| {
-        @import("workspaces.zig").arrangeNow(&tables, &atoms, case.workspace);
+        fixed_panels.layOutNow(&tables, &atoms, case.layout);
         state.stage_focused.* = case.focused;
         rows.actions.reset();
         app.declareActions(&atoms, rows.sink());
@@ -402,7 +402,7 @@ test "with no world shown the app takes no stale time messages and draws nothing
     try panels_mod.ensure(scratch, &atoms, &tables);
 
     const state = state_mod.app(&tables, &atoms);
-    @import("workspaces.zig").arrangeNow(&tables, &atoms, .figure);
+    fixed_panels.layOutNow(&tables, &atoms, .figure_stage);
 
     // A frame and a tick reach the app while no world is shown: it takes neither.
     app.apply(&tables, .from("frame"));
@@ -419,7 +419,7 @@ test "with no world shown the app takes no stale time messages and draws nothing
     app.render(&tables, &atoms, viewport, &context);
     try std.testing.expectEqual(@as(u32, 0), hits.count());
 
-    @import("workspaces.zig").arrangeNow(&tables, &atoms, .app);
+    fixed_panels.layOutNow(&tables, &atoms, .empty);
     app.apply(&tables, .from("frame"));
     app.apply(&tables, .from("tick"));
 }

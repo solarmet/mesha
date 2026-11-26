@@ -52,7 +52,7 @@ pub fn bandCount(interval_ms: f32) usize {
 
 /// Fills the bands across a chart `width` wide and `height` tall whose top stands for
 /// `top_ms`. When `font` is given, each band's top edge is labelled with its time.
-pub fn drawBands(ctx: *roop.Context, width: f32, height: f32, top_ms: f32, interval_ms: f32, font: ?Atom) void {
+pub fn drawBands(ctx: *roop.Context, width: f32, height: f32, top_ms: f32, interval_ms: f32, font: ?roop.Font) void {
     if (top_ms <= 0 or width <= 0 or height <= 0) return;
     const count = bandCount(interval_ms);
     for (0..count) |index| {
@@ -85,7 +85,7 @@ pub fn drawBands(ctx: *roop.Context, width: f32, height: f32, top_ms: f32, inter
 /// The bands' top edges and their times, to draw over a chart that covers the bands, such
 /// as bars: a line across at each refresh, labelled at the left on a dark backing. Labels go
 /// from the bottom up, and one that would overlap a label under it is left out.
-pub fn drawBandEdges(ctx: *roop.Context, width: f32, height: f32, top_ms: f32, interval_ms: f32, font: Atom) void {
+pub fn drawBandEdges(ctx: *roop.Context, width: f32, height: f32, top_ms: f32, interval_ms: f32, font: roop.Font) void {
     if (top_ms <= 0 or width <= 0 or height <= 0) return;
     const count = bandCount(interval_ms);
     ctx.fontFace(font);

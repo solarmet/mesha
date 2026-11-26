@@ -19,7 +19,7 @@ pub const Options = struct {
     icon: ?icons.Icon = null,
     badge: Badge = .none,
     variant: Variant = .icon_text,
-    size: ui.Size = .{ .w = .fill, .h = .{ .fixed = 28 } },
+    size: ui.Size = .{ .w = .fill, .h = .{ .fixed = style.metric.button_height } },
     /// The side of an `icon_only` button, which is square and ignores `size`. It must fit the
     /// row it sits in: a child taller than its row is placed at the row's top, not centred.
     icon_only_side: f32 = 40,
@@ -37,14 +37,14 @@ pub fn inkCenteredOrigin(size: math.Vec2f, glyph: resources.font.Glyph) math.Vec
     return .{ .x = (size.x - width) * 0.5 - glyph.xoff, .y = (size.y - height) * 0.5 - glyph.yoff };
 }
 
-/// Draws the icon `text` from the atlas `font_name` with its ink centred in `size`.
-fn drawInkCentered(font_name: mesha.Atom, text: []const u8, color: ui.Color, size: math.Vec2f, ctx: *roop.Context) void {
-    const provider = ctx.renderer.font_provider orelse return;
-    const font = provider.get(font_name) orelse return;
+/// Draws the icon `text` from `icon_font` with its ink centred in `size`; nothing while the font
+/// loads, as the engine's font in its place has no icons.
+fn drawInkCentered(icon_font: resources.Font, text: []const u8, color: ui.Color, size: math.Vec2f, ctx: *roop.Context) void {
+    const font = ctx.fontView(icon_font) orelse return;
     const codepoint = std.unicode.utf8Decode(text) catch return;
     const glyph = font.glyph(codepoint) orelse return;
     const position = inkCenteredOrigin(size, glyph.*);
-    ctx.fontFace(font_name);
+    ctx.fontFace(icon_font);
     ctx.textAlign(.{ .left = true, .baseline = true });
     ctx.fillColor(color);
     _ = ctx.text(position.x, position.y, text);
@@ -56,7 +56,7 @@ const RailIcon = struct {
     badge: Badge = .none,
 
     pub fn draw(self: *const RailIcon, size: math.Vec2f, ctx: *roop.Context) void {
-        drawInkCentered(resources.kRailIconFontName, self.text, self.color, size, ctx);
+        drawInkCentered(style.rail_icon_font, self.text, self.color, size, ctx);
         if (self.badge == .lock and ctx.pathBudget().paths >= 3) {
             const x = size.x - 13;
             const y = size.y - 13;
@@ -86,7 +86,7 @@ pub const SmallIcon = struct {
     color: ui.Color,
 
     pub fn draw(self: *const SmallIcon, size: math.Vec2f, ctx: *roop.Context) void {
-        drawInkCentered(resources.kRowIconFontName, self.text, self.color, size, ctx);
+        drawInkCentered(style.row_icon_font, self.text, self.color, size, ctx);
     }
 };
 
@@ -115,7 +115,8 @@ pub fn render(tree: *ui.Tree, id: anytype, click: ui.Target, options: Options) v
         .cross_align = .center,
         .main_align = if (icon_only) .start else .center,
         .size = if (icon_only) .{ .w = .{ .fixed = options.icon_only_side }, .h = .{ .fixed = options.icon_only_side } } else options.size,
-        .padding = if (icon_only) 0 else 4,
+        .padding = if (icon_only) 0 else style.metric.control_padding,
+        .padding_y = 0,
         .gap = if (icon_only) 0 else if (options.variant == .compact) 4 else 6,
         .bg = fillColor(options),
         .bg_hover = hoverColor(options),
@@ -181,7 +182,7 @@ fn renderTab(tree: *ui.Tree, id: anytype, click: ui.Target, options: Options) vo
     else
         style.col.text_dim;
     const label_row_id = ui.partId(tree, id, "tab_row");
-    if (tree.beginRect(label_row_id, .{ .axis = .horizontal, .cross_align = .center, .main_align = .center, .size = .{ .w = .fill, .h = .fill }, .padding = 4, .gap = 6, .clip_content = true })) {
+    if (tree.beginRect(label_row_id, .{ .axis = .horizontal, .cross_align = .center, .main_align = .center, .size = .{ .w = .fill, .h = .fill }, .padding = style.metric.control_padding, .padding_y = 0, .gap = 6, .clip_content = true })) {
         defer tree.endRect();
         if (options.icon) |icon| {
             if (options.icons_available) {

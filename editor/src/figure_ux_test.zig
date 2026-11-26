@@ -6,6 +6,11 @@ const mesha_runtime = @import("mesha_runtime");
 const workspace = @import("figure/workspace.zig");
 const transport_fixture = @import("figure/transport_fixture.zig");
 const figure_runtime = mesha_runtime.figure;
+const button = @import("ui/button.zig");
+const session = @import("figure/session.zig");
+const selection = @import("figure/selection.zig");
+const list = @import("figure/list_navigation.zig");
+const panels = @import("figure/panels.zig");
 pub const Fixture = figure_runtime.domain.tests.Fixture;
 const t = figure_runtime.domain.tables;
 const commands = figure_runtime.domain.command;
@@ -19,7 +24,6 @@ fn publish(f: *Fixture) !void {
 }
 
 test "preview shared button disabled click stable IDs and icon fallback" {
-    const button = @import("ui/button.zig");
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
@@ -44,8 +48,6 @@ test "preview shared button disabled click stable IDs and icon fallback" {
 }
 
 test "artist blend document replacement preserves valid selection but cancels drag and close prunes state" {
-    const session = @import("figure/session.zig");
-    const selection = @import("figure/selection.zig");
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
@@ -62,7 +64,7 @@ test "artist blend document replacement preserves valid selection but cancels dr
     selection.select(&f.tables, &f.atoms, f.atoms.intern("layer"), id, false, false);
     const folder = (try commands.apply(&f.atoms, &f.tables, .{ .group_layers = .{ .doc = doc, .ids = &.{id} } })).?;
     try publish(&f);
-    try selection.toggleCollapse(@import("figure/session.zig").collapsedFolders(&f.tables), @import("figure/session.zig").get(&f.tables), folder);
+    try selection.toggleCollapse(session.collapsedFolders(&f.tables), session.get(&f.tables), folder);
     selection.select(&f.tables, &f.atoms, f.atoms.intern("layer"), id, false, false);
     selection.select(&f.tables, &f.atoms, f.atoms.intern("layer"), folder, true, false);
     selection.select(&f.tables, &f.atoms, f.atoms.intern("layer"), id, true, false);
@@ -74,10 +76,10 @@ test "artist blend document replacement preserves valid selection but cancels dr
     try publish(&f);
     selection.prune(&f.tables, &f.atoms);
     try std.testing.expectEqual(@as(u32, 0), s.outliner_drag.*);
-    try std.testing.expect(selection.contains(@import("figure/session.zig").get(&f.tables), @import("figure/session.zig").selections(&f.tables), f.atoms.intern("layer"), id));
+    try std.testing.expect(selection.contains(session.get(&f.tables), session.selections(&f.tables), f.atoms.intern("layer"), id));
     try std.testing.expectEqual(id, s.active_id.*);
-    try std.testing.expect(!selection.contains(@import("figure/session.zig").get(&f.tables), @import("figure/session.zig").selections(&f.tables), f.atoms.intern("layer"), folder));
-    try std.testing.expect(!selection.collapsed(@import("figure/session.zig").collapsedFolders(&f.tables), @import("figure/session.zig").get(&f.tables), folder));
+    try std.testing.expect(!selection.contains(session.get(&f.tables), session.selections(&f.tables), f.atoms.intern("layer"), folder));
+    try std.testing.expect(!selection.collapsed(session.collapsedFolders(&f.tables), session.get(&f.tables), folder));
     s.outliner_drag.* = 999999;
     selection.prune(&f.tables, &f.atoms);
     try std.testing.expectEqual(@as(u32, 0), s.outliner_drag.*);
@@ -87,12 +89,11 @@ test "artist blend document replacement preserves valid selection but cancels dr
     selection.prune(&f.tables, &f.atoms);
     try std.testing.expectEqual(@as(u32, 0), s.outliner_drag.*);
     try std.testing.expectEqual(@as(u32, 0), s.active_id.*);
-    try std.testing.expect(!selection.contains(@import("figure/session.zig").get(&f.tables), @import("figure/session.zig").selections(&f.tables), f.atoms.intern("layer"), id));
+    try std.testing.expect(!selection.contains(session.get(&f.tables), session.selections(&f.tables), f.atoms.intern("layer"), id));
 }
 
 test "preview figure list wheel stays independent and keyboard reveal follows resize" {
-    const list = @import("figure/list_navigation.zig");
-    const Node = @import("figure/selection.zig").OutlinerNode;
+    const Node = selection.OutlinerNode;
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
@@ -105,38 +106,35 @@ test "preview figure list wheel stays independent and keyboard reveal follows re
         .{ .kind = clip, .id = 1, .name = clip },
         .{ .kind = pose, .id = 1, .name = pose },
     };
-    // Rows share one geometry with tabs: a bones/clips/poses list starts at 66,
+    // Rows share one geometry with tabs: a bones/clips/poses list starts at 40,
     // the art tab adds its folder tools row.
-    try std.testing.expectEqual(@as(usize, 3), list.visibleEnd(&nodes, 0, 120, list.top(288, false)));
+    try std.testing.expectEqual(@as(usize, 3), list.visibleEnd(&nodes, 0, 136, list.top(288, false)));
     try std.testing.expectEqual(@as(usize, 4), list.visibleEnd(&nodes, 0, 300, list.top(288, false)));
-    try std.testing.expectEqual(@as(usize, 2), list.visibleEnd(&nodes, 0, 120, list.top(288, true)));
+    try std.testing.expectEqual(@as(usize, 2), list.visibleEnd(&nodes, 0, 136, list.top(288, true)));
     // Scrolling away from the selected first row must survive subsequent renders.
     const scrolled = list.wheel(0, -2, nodes.len - 1);
     try std.testing.expectEqual(@as(usize, 2), list.scrollStart(&nodes, scrolled, 0, 300, false, list.top(288, false)));
     try std.testing.expectEqual(@as(usize, 0), list.scrollStart(&nodes, scrolled, 0, 300, true, list.top(288, false)));
     // A selected bottom row remains visible when the panel shrinks.
-    const resized = list.scrollStart(&nodes, 0, 3, 120, true, list.top(288, false));
+    const resized = list.scrollStart(&nodes, 0, 3, 136, true, list.top(288, false));
     try std.testing.expect(resized > 0);
-    try std.testing.expect(list.visibleEnd(&nodes, resized, 120, list.top(288, false)) > 3);
-    try std.testing.expectEqual(@as(usize, 0), list.scrollStart(&nodes, resized, 0, 120, true, list.top(288, false)));
+    try std.testing.expect(list.visibleEnd(&nodes, resized, 136, list.top(288, false)) > 3);
+    try std.testing.expectEqual(@as(usize, 0), list.scrollStart(&nodes, resized, 0, 136, true, list.top(288, false)));
     // A width-only resize that rewraps the tab rows costs row capacity and must
     // still reveal the selected row.
-    try std.testing.expectEqual(@as(usize, 3), list.scrollStart(&nodes, resized, 3, 120, true, list.top(190, true)));
+    try std.testing.expectEqual(@as(usize, 3), list.scrollStart(&nodes, resized, 3, 136, true, list.top(190, true)));
 }
 
 test "preview figure outliner list top follows tab rows and art folder tools" {
-    const list = @import("figure/list_navigation.zig");
     // Default-width dock: one tab row; art adds the folder tools row.
-    try std.testing.expectEqual(@as(f32, 36), list.top(288, false));
-    try std.testing.expectEqual(@as(f32, 68), list.top(288, true));
+    try std.testing.expectEqual(@as(f32, 40), list.top(288, false));
+    try std.testing.expectEqual(@as(f32, 76), list.top(288, true));
     // Narrow dock wraps the four tabs into two rows, including the 4 px gap.
-    try std.testing.expectEqual(@as(f32, 68), list.top(160, false));
-    try std.testing.expectEqual(@as(f32, 100), list.top(160, true));
+    try std.testing.expectEqual(@as(f32, 76), list.top(160, false));
+    try std.testing.expectEqual(@as(f32, 112), list.top(160, true));
 }
 
 test "preview figure outliner category tabs filter kinds and flatten pose and clip depth" {
-    const session = @import("figure/session.zig");
-    const selection = @import("figure/selection.zig");
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
@@ -179,8 +177,6 @@ test "preview figure outliner category tabs filter kinds and flatten pose and cl
 }
 
 test "preview figure outliner tab reveals category on selection and keeps view on multi-select" {
-    const session = @import("figure/session.zig");
-    const selection = @import("figure/selection.zig");
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
@@ -215,7 +211,6 @@ fn figureTestId(f: *Fixture, doc: mesha.Atom, comptime family: []const u8, compt
 /// One outliner render into a scratch tree; the scroll/reveal bookkeeping in
 /// session state is the observable, no roop drawing is needed.
 fn renderOutlinerOnce(f: *Fixture, width: f32, height: f32) !void {
-    const panels = @import("figure/panels.zig");
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     var tree = try ui.Tree.init(.{ .allocator = arena.allocator() }, &f.atoms, 8192);
@@ -225,9 +220,6 @@ fn renderOutlinerOnce(f: *Fixture, width: f32, height: f32) !void {
 }
 
 test "preview figure outliner tab browse renders from the top without re-revealing selection" {
-    const list = @import("figure/list_navigation.zig");
-    const session = @import("figure/session.zig");
-    const selection = @import("figure/selection.zig");
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
@@ -292,8 +284,6 @@ test "preview figure outliner tab browse renders from the top without re-reveali
 const api = mesha.figure;
 const history = figure_runtime.domain.history;
 test "artist blend representative staging and publication allocation failures are atomic" {
-    const selection = @import("figure/selection.zig");
-    const session = @import("figure/session.zig");
     for (0..3) |operation| {
         var f: Fixture = .{};
         try f.init();
@@ -339,7 +329,7 @@ test "artist blend representative staging and publication allocation failures ar
             try std.testing.expect(state.journal.next_sequence >= next_sequence);
             try std.testing.expectEqual(metadata_count, metadata.count());
             try std.testing.expect(!history.anyActive(&f.tables));
-            try std.testing.expect(selection.contains(@import("figure/session.zig").get(&f.tables), @import("figure/session.zig").selections(&f.tables), f.atoms.intern("layer"), 1));
+            try std.testing.expect(selection.contains(session.get(&f.tables), session.selections(&f.tables), f.atoms.intern("layer"), 1));
         }
         // Rejection must preserve the pre-existing redo branch too.
         try history.redo(&f.tables, &f.atoms, doc);

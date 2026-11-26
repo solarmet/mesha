@@ -19,6 +19,7 @@ const panels_mod = mesha.panels;
 const sequencer = mesha.sequencer;
 const input = mesha.input;
 const figure_workspace = @import("figure/workspace.zig");
+const editor_sequencer = @import("editor_sequencer.zig");
 
 pub const table_name = "editor_status_bar";
 const kTextSize: usize = 256;
@@ -187,6 +188,7 @@ pub fn render(scratch: memory_mod.Scratch, tables: *Table.Registry, atoms: *Atom
         .size = .{ .w = .{ .fixed = rect.w }, .h = .{ .fixed = rect.h } },
         .bg = look.fill,
         .padding = 6,
+        .padding_y = 0,
         .clip_content = true,
     })) {
         defer tree.endRect();
@@ -194,5 +196,5 @@ pub fn render(scratch: memory_mod.Scratch, tables: *Table.Registry, atoms: *Atom
         const text_color = if (hovering) style.col.text_dim else look.hint;
         tree.text("editor.status_bar.text", if (hovering) hover_text else hint, .{ .font = style.ui_font, .color = text_color, .size_hint = .{ .w = .fill } });
     }
-    tree.commit(.{ .root_size = .{ .x = rect.w, .y = rect.h }, .origin = .{ .x = rect.x, .y = rect.y }, .depth = depth }, ctx, hits);
+    tree.commit(.{ .root_size = .{ .x = rect.w, .y = rect.h }, .origin = .{ .x = rect.x, .y = rect.y }, .depth = depth }, ctx, hits, editor_sequencer.redrawInbox());
 }

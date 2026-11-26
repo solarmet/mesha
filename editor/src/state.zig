@@ -29,6 +29,8 @@ pub fn prepareSingletonSchema(tables: *Table.Registry, schema: *const Table.Sche
 
 pub const ViewFocusView = struct {
     id: *Atom,
+    /// The focus clicks the editor last told the panels: an `editor.FocusClicks`, 0 while a
+    /// click may move the focus.
     focus_clicks_disabled: *u8,
     /// Set as the editor's init is applied: the editor's next update asks resources for the
     /// table index, keybind tables and fonts. Init admission takes back the tables it makes,

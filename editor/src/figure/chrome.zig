@@ -28,9 +28,14 @@ const math = mesha.math;
 const editor_state = @import("../state.zig");
 const editor_mod = @import("../editor.zig");
 const editor_modes = @import("../modes.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const button = @import("../ui/button.zig");
 const vector_field = ui.vector_field;
 const style = @import("../ui/style.zig");
+const editor_sequencer = @import("../editor_sequencer.zig");
+const sketches = @import("sketches.zig");
+const status_bar = @import("../status_bar.zig");
+const transport_fixture = @import("transport_fixture.zig");
 
 const Log = mesha.log.scope("figure_editor");
 /// This file's profile zones, in its log scope.
@@ -87,6 +92,11 @@ const utilities = [_]Tool{
     .{ .label = "Undo", .action = @tagName(workspace.Msg.figure_undo), .icon = .undo, .hint = "Undo the last document edit" },
     .{ .label = "Redo", .action = @tagName(workspace.Msg.figure_redo), .icon = .redo, .hint = "Redo the last undone edit" },
     .{ .label = "Save", .action = @tagName(workspace.Msg.figure_save), .icon = .content_save, .hint = "Save the document" },
+};
+/// The panels beside the stage, each lit while it is shown.
+const panel_toggles = [_]struct { tool: Tool, panel: Atom }{
+    .{ .tool = .{ .label = "Layers", .action = @tagName(workspace.Msg.figure_toggle_layers), .icon = .layers, .hint = "Show or hide the Layers panel" }, .panel = workspace.outliner_panel.id },
+    .{ .tool = .{ .label = "Properties", .action = @tagName(workspace.Msg.figure_toggle_properties), .icon = .cog, .hint = "Show or hide the Properties panel" }, .panel = workspace.inspector_panel.id },
 };
 pub const tool_size: f32 = 40;
 pub const tool_gap: f32 = 4;
@@ -211,7 +221,7 @@ pub fn hoverRegion(tree: *ui.Tree, text: []const u8) void {
 
 pub const header_padding: f32 = 4;
 pub const header_gap: f32 = 4;
-const mode_button_width: f32 = 76;
+const mode_button_width: f32 = 84;
 
 /// Where a mode button sits at a possibly fractional slot, matching `renderHeader`'s row.
 fn modeSlotRect(header: panels_mod.Rect, slot: f32) panels_mod.Rect {
@@ -281,11 +291,15 @@ fn renderHeader(tree: *ui.Tree, tables: *Table.Registry, shortcuts: *editor_mod.
             actionButton(tree, shortcuts, .header, mode, .{ .variant = .tab, .size = .{ .w = .{ .fixed = mode_button_width }, .h = .fill }, .selected = editor.mode.* == value, .enabled = available });
         }
         tree.rect("figure.header.space", .{ .size = .{ .w = .fill, .h = .fill } });
-        @import("sketches.zig").renderMembers(tree, tables);
+        sketches.renderMembers(tree, tables);
         const zoom = std.fmt.allocPrint(tree.frame_allocator.allocator, "{d:.0}%", .{editor.view_zoom.* * 100}) catch "Zoom";
         tree.text("figure.header.zoom", zoom, .{ .font = style.ui_font, .color = style.col.text_dim, .size_hint = .{ .w = .{ .fixed = 64 } } });
         const utility_side = rect.h - 2 * header_padding;
         for (utilities) |entry| actionButton(tree, shortcuts, .header, entry, .{ .variant = .icon_only, .icon_only_side = utility_side, .enabled = available });
+        for (panel_toggles) |toggle| {
+            const shown = fixed_panels.panelShown(tables, toggle.panel);
+            actionButton(tree, shortcuts, .header, toggle.tool, .{ .variant = .icon_only, .icon_only_side = utility_side, .selected = shown });
+        }
     }
 }
 
@@ -664,7 +678,7 @@ pub fn renderRegionBorders(layout: geometry.StageLayout, ctx: *roop.Context) voi
 pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registry, viewport: plugin.Viewport, ctx: *roop.Context, result: canvas.RenderResult) void {
     if (viewport.width <= 0 or viewport.height <= 0) return;
     const local_stage = panels_mod.Rect{ .w = viewport.width, .h = viewport.height };
-    const stage_chrome = @import("workspace.zig").stageChrome(session.observed(tables));
+    const stage_chrome = workspace.stageChrome(session.observed(tables));
     const layout = geometry.stageLayout(local_stage, stage_chrome);
     noteRendering(session.feedback(tables), result);
     const scratch = mem.frameScratchAllocator() catch return;
@@ -673,7 +687,7 @@ pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registr
     var shortcuts = editor_mod.Shortcuts.of(scratch.allocator, tables);
     const hovered = editor_state.hoveredElementId(tables);
     const hits = editor_state.hitRegions(tables, atoms);
-    const hit_depth = @import("../editor.zig").kHitDepth;
+    const hit_depth = editor_mod.kHitDepth;
     if (stage_chrome.focus == .off) {
         if (tree.beginRect("figure.chrome", .{ .size = .{ .w = .fill, .h = .fill }, .clip_content = true })) {
             defer tree.endRect();
@@ -682,21 +696,21 @@ pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registr
             renderCanvasSpace(&tree, session.feedback(tables), layout.canvas.h);
         }
         const center_h = layout.header.h + layout.options.h + layout.canvas.h;
-        tree.commit(.{ .root_size = .{ .x = layout.header.w, .y = center_h }, .origin = .{ .x = layout.header.x, .y = layout.header.y }, .offset = .{ .x = viewport.x, .y = viewport.y }, .hovered = hovered, .depth = hit_depth }, ctx, hits);
+        tree.commit(.{ .root_size = .{ .x = layout.header.w, .y = center_h }, .origin = .{ .x = layout.header.x, .y = layout.header.y }, .offset = .{ .x = viewport.x, .y = viewport.y }, .hovered = hovered, .depth = hit_depth }, ctx, hits, editor_sequencer.redrawInbox());
         renderModeGlide(session.motion(tables), session.get(tables), layout.header, ctx);
         const hint = statusHint(scratch.allocator, tables, atoms);
-        @import("../status_bar.zig").render(scratch, tables, atoms, layout.status, hint, motion.statusLook(session.motion(tables)), ctx, hits, hit_depth);
+        status_bar.render(scratch, tables, atoms, layout.status, hint, motion.statusLook(session.motion(tables)), ctx, hits, hit_depth);
         renderRegionBorders(layout, ctx);
     } else {
         renderCanvasSpace(&tree, session.feedback(tables), layout.canvas.h);
-        tree.commit(.{ .root_size = .{ .x = layout.canvas.w, .y = layout.canvas.h }, .origin = .{ .x = layout.canvas.x, .y = layout.canvas.y }, .offset = .{ .x = viewport.x, .y = viewport.y }, .hovered = hovered, .depth = hit_depth }, ctx, hits);
+        tree.commit(.{ .root_size = .{ .x = layout.canvas.w, .y = layout.canvas.h }, .origin = .{ .x = layout.canvas.x, .y = layout.canvas.y }, .offset = .{ .x = viewport.x, .y = viewport.y }, .hovered = hovered, .depth = hit_depth }, ctx, hits, editor_sequencer.redrawInbox());
     }
     const editor = session.get(tables);
     const dock = dockRect(editor.mode.*, layout.canvas);
     if (dock.w <= 0) return;
     var dock_tree = ui.Tree.init(scratch, atoms, 128) catch return;
     renderDock(&dock_tree, tables, &shortcuts, dock);
-    dock_tree.commit(.{ .root_size = .{ .x = dock.w, .y = dock.h }, .origin = .{ .x = dock.x, .y = dock.y }, .offset = .{ .x = viewport.x, .y = viewport.y }, .hovered = hovered, .depth = hit_depth + 1 }, ctx, hits);
+    dock_tree.commit(.{ .root_size = .{ .x = dock.w, .y = dock.h }, .origin = .{ .x = dock.x, .y = dock.y }, .offset = .{ .x = viewport.x, .y = viewport.y }, .hovered = hovered, .depth = hit_depth + 1 }, ctx, hits, editor_sequencer.redrawInbox());
     renderToolGlide(session.get(tables), session.motion(tables), session.observed(tables), dock, ctx);
 }
 
@@ -710,7 +724,7 @@ test "drawing header zoom text remains frame owned after helper and rail constru
     var tables: Table.Registry = undefined;
     try tables.init(&mem, 96);
     defer tables.deinit();
-    var transport: @import("transport_fixture.zig").Transport = undefined;
+    var transport: transport_fixture.Transport = undefined;
     try transport.init(&mem, &atoms, &tables);
     defer transport.deinit();
     const editor = session.get(&tables);

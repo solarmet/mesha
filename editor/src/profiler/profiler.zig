@@ -53,7 +53,7 @@ const filter_field = ui.filter_field;
 const marks = ui.marks;
 const vsync = @import("../ui/vsync.zig");
 const sequencer = mesha.sequencer;
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const editor_sequencer = @import("../editor_sequencer.zig");
 const modes = @import("../modes.zig");
 
@@ -123,7 +123,7 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
     // The snapshot each frame, and recording and holding frames, ask the recorder.
     result.writeIfPresent(frame.tables, Atom.from(profiler_api.commands_table_name));
     // Toggling the profiler shows or closes its panel, and may ask the panels for the focus.
-    result.writeIfPresent(frame.tables, Atom.from(workspaces.shown_panels_table_name));
+    result.writeIfPresent(frame.tables, Atom.from(fixed_panels.shown_panels_table_name));
     result.writeIfPresent(frame.tables, Atom.from(plugin.panels.commands_table_name));
     if (frame.messages.len != 0) result.write(state_table);
     modes.declarePanelModes(&result, frame.tables, panel_modes_table_name);
@@ -205,12 +205,12 @@ const divider_size: f32 = 6;
 const default_zones_share: f32 = 0.55;
 /// The narrowest a table may be dragged to while the other has room.
 const table_least_width: f32 = 180;
-const widget_title_height: f32 = 22;
-const widgets_bar_height: f32 = 34;
+const widget_title_height: f32 = style.metric.row_height;
+const widgets_bar_height: f32 = style.metric.bar_height;
 const filter_width: f32 = 300;
 /// The fewest rows the tables keep, however tall the lanes would like to be.
 const min_table_rows: f32 = 6;
-const row_height: f32 = 22;
+const row_height: f32 = style.metric.row_height;
 const padding: f32 = 4;
 /// Pixels a press may move and still count as a click.
 const click_slop: f32 = 3;
@@ -468,7 +468,8 @@ fn regionsOf(content: Rect, snapshot: ?*const Snapshot, layout: Layout) Regions 
     y += divider_size;
     const bar_height = @min(widgets_bar_height, widgets_height);
     const widgets_bar: Rect = .{ .x = inner.x, .y = y, .w = inner.w, .h = bar_height };
-    const filter: Rect = .{ .x = inner.x + 4, .y = y + @round((bar_height - 26) * 0.5), .w = @min(filter_width, inner.w), .h = 26 };
+    const field_height = style.metric.field_height;
+    const filter: Rect = .{ .x = inner.x + 4, .y = y + @round((bar_height - field_height) * 0.5), .w = @min(filter_width, inner.w), .h = field_height };
     y += bar_height;
     const tables_height = widgets_height - bar_height;
     const tables_width = @max(inner.w - divider_size, 0);
@@ -521,14 +522,14 @@ fn zonesWidth(tables_width: f32, share: f32) f32 {
 pub const panel_name = "profiler";
 
 /// Where the profiler opens: below the panel that asked for it.
-/// The profiler's panel, a fixed panel the workspaces system declares while it is shown: it
+/// The profiler's panel, a fixed panel `fixed_panels` declares while it is shown: it
 /// opens below the panel that asked for it.
 pub const fixed_panel: plugin.panels.Open = .{ .id = panel, .title = "Profiler", .root = profiler_root, .side = .bottom, .share = 0.4 };
 
 /// Shows the log file at `path` in the profiler's panel.
 pub fn openLog(tables: *Table.Registry, atoms: *Atom.Registry, path: []const u8) void {
     profiler_api.request(tables.memory, tables, .{ .load_file = path });
-    workspaces.showPanel(tables, atoms, panel, .beside_focused, .take);
+    fixed_panels.showPanel(tables, atoms, panel, .beside_focused, .take);
 }
 
 /// The profiler panel's content, or null while it is closed or hidden.
@@ -666,7 +667,7 @@ fn handle(pass: *sequencer.Pass, state: StateView, received: sequencer.Message) 
     const out = outboxOf(pass);
     const message = received.tag.to(Msg);
     switch (message) {
-        .profiler_toggle => workspaces.togglePanel(tables, atoms, panel),
+        .profiler_toggle => fixed_panels.togglePanel(tables, atoms, panel),
         .profiler_snapshot => {
             const reply = try received.payloadAs(profiler_api.SnapshotMsg);
             state.snapshot_address.* = @intFromPtr(reply.snapshot);
@@ -1122,7 +1123,7 @@ pub fn render(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *Atom.
             .budget_ms = vsync_ms,
             // Room for the vsync bands and some way past them.
             .scale_ms = @max(vsync_ms * 4, vsync.band_limit_ms * 1.5),
-            .font = style.ui_font,
+            .font = style.small_font,
             .chart = if (snapshot) |shown| chartOf(state, shown, allocator) else null,
             .message_levels = if (snapshot) |shown| shown.frame_message_levels else &.{},
         };
@@ -1143,7 +1144,7 @@ pub fn render(memory: *memory_mod.Memory, tables: *Table.Registry, atoms: *Atom.
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .hovered = editor_state.hoveredElementId(tables),
         .depth = hit_depth,
-    }, ctx, editor_state.hitRegions(tables, atoms));
+    }, ctx, editor_state.hitRegions(tables, atoms), editor_sequencer.redrawInbox());
 }
 
 /// A divider, lit while hovered or dragged, with the cursor that says which way it moves.
@@ -1235,7 +1236,7 @@ fn renderWidgetsBar(tree: *ui.Tree, state: StateView, filter: filter_field.Field
         const label = std.fmt.allocPrint(allocator, "{s} {d}", .{ entry.label, count }) catch entry.label;
         const shown = state.message_levels.* & entry.group.bit() != 0;
         const bit: u8 = entry.group.bit();
-        button.render(tree, .{ "profiler.level", @intFromEnum(entry.group) }, editor_sequencer.to(tree, system(), .from(Msg.profiler_message_level), bit), .{ .label = label, .tooltip = entry.tooltip, .variant = .text_only, .selected = shown, .size = .{ .w = .{ .fixed = 96 }, .h = .{ .fixed = 26 } } });
+        button.render(tree, .{ "profiler.level", @intFromEnum(entry.group) }, editor_sequencer.to(tree, system(), .from(Msg.profiler_message_level), bit), .{ .label = label, .tooltip = entry.tooltip, .variant = .text_only, .selected = shown, .size = .{ .w = .{ .fixed = 120 }, .h = .{ .fixed = style.metric.button_height } } });
     }
 }
 
@@ -1289,9 +1290,9 @@ fn renderToolbar(tree: *ui.Tree, state: StateView, snapshot: ?*const Snapshot, v
     const ms_label = std.fmt.allocPrint(allocator, "{d:.2} ms", .{frame_ms}) catch "";
     tree.text("profiler.frame_ms", ms_label, .{ .font = style.ui_font, .color = if (over_budget) style.col.danger else style.col.success });
     tree.text("profiler.status", status, .{ .font = style.ui_font, .color = style.col.text_disabled });
-    if (shown.from_file) button.render(tree, "profiler.live", editor_sequencer.to(tree, system(), .from(Msg.profiler_show_live), {}), .{ .label = "Live", .tooltip = "Leave the log file and show the engine", .variant = .text_only, .size = .{ .w = .{ .fixed = 48 }, .h = .{ .fixed = 28 } } });
+    if (shown.from_file) button.render(tree, "profiler.live", editor_sequencer.to(tree, system(), .from(Msg.profiler_show_live), {}), .{ .label = "Live", .tooltip = "Leave the log file and show the engine", .variant = .text_only, .size = .{ .w = .{ .fixed = 48 }, .h = .{ .fixed = style.metric.button_height } } });
     tree.rect("profiler.toolbar.gap2", .{ .size = .{ .w = .{ .fixed = 8 }, .h = .fill } });
-    button.render(tree, "profiler.fit", editor_sequencer.to(tree, system(), .from(Msg.profiler_fit), {}), .{ .label = "Fit", .tooltip = "Show the whole frame", .variant = .text_only, .size = .{ .w = .{ .fixed = 48 }, .h = .{ .fixed = 28 } } });
+    button.render(tree, "profiler.fit", editor_sequencer.to(tree, system(), .from(Msg.profiler_fit), {}), .{ .label = "Fit", .tooltip = "Show the whole frame", .variant = .text_only, .size = .{ .w = .{ .fixed = 48 }, .h = .{ .fixed = style.metric.button_height } } });
     const selected = selectedZone(state, shown) orelse return;
     const name = shown.zoneName(selected.zone.name);
     const self_ns = timeline.selfNs(selected.lane.depths, selected.depth, selected.zone);
@@ -1311,7 +1312,7 @@ fn renderTimeline(tree: *ui.Tree, state: StateView, snapshot: ?*const Snapshot, 
     const scrubbing = @as(Drag, @enumFromInt(state.drag.*)) == .strip;
     const cursor_x: ?f32 = if (regions.timeline.contains(pointer.x, pointer.y) and !scrubbing) pointer.x - regions.timeline.x else null;
     const ruler = allocator.create(timeline.RulerDrawable) catch return;
-    ruler.* = .{ .view = view, .frame_begin_ns = @floatFromInt(shown.begin_ns), .font = style.ui_font, .cursor_x = cursor_x };
+    ruler.* = .{ .view = view, .frame_begin_ns = @floatFromInt(shown.begin_ns), .font = style.small_font, .cursor_x = cursor_x };
     tree.custom("profiler.ruler", ruler, .{ .size = .{ .w = .fill, .h = .{ .fixed = regions.ruler.h } }, .clip_content = true });
     var buffer: [8]Rect = undefined;
     const selected = selectedZone(state, shown);
@@ -1322,7 +1323,7 @@ fn renderTimeline(tree: *ui.Tree, state: StateView, snapshot: ?*const Snapshot, 
             .lane = shown.lanes[index],
             .view = view,
             .names = shown,
-            .font = style.ui_font,
+            .font = style.small_font,
             .highlight = state.highlight.*,
             .filter = query,
             .pointer = if (over) .{ .x = pointer.x - rect.x, .y = pointer.y - rect.y } else null,
@@ -1347,12 +1348,12 @@ const StatColumn = struct { title: []const u8, width: f32, sort: ?SortColumn };
 
 const stat_columns = [_]StatColumn{
     .{ .title = "Zone", .width = 0, .sort = .name },
-    .{ .title = "Share of frame", .width = 110, .sort = .total },
-    .{ .title = "Count", .width = 52, .sort = .count },
-    .{ .title = "Total ms", .width = 70, .sort = .total },
-    .{ .title = "Self ms", .width = 70, .sort = .self },
-    .{ .title = "Mean ms", .width = 70, .sort = .mean },
-    .{ .title = "Max ms", .width = 70, .sort = .max },
+    .{ .title = "Share of frame", .width = 136, .sort = .total },
+    .{ .title = "Count", .width = 64, .sort = .count },
+    .{ .title = "Total ms", .width = 100, .sort = .total },
+    .{ .title = "Self ms", .width = 90, .sort = .self },
+    .{ .title = "Mean ms", .width = 100, .sort = .mean },
+    .{ .title = "Max ms", .width = 90, .sort = .max },
 };
 
 /// Every zone name in the frame that the filter leaves, sorted, a row each; a click picks
@@ -1461,10 +1462,10 @@ fn messageEarlier(_: void, a: MessageRow, b: MessageRow) bool {
 }
 
 const message_columns = [_]StatColumn{
-    .{ .title = "Time ms", .width = 64, .sort = null },
-    .{ .title = "Thread", .width = 64, .sort = null },
-    .{ .title = "Level", .width = 46, .sort = null },
-    .{ .title = "Scope", .width = 96, .sort = null },
+    .{ .title = "Time ms", .width = 84, .sort = null },
+    .{ .title = "Thread", .width = 72, .sort = null },
+    .{ .title = "Level", .width = 68, .sort = null },
+    .{ .title = "Scope", .width = 110, .sort = null },
     .{ .title = "Message", .width = 0, .sort = null },
 };
 
@@ -1528,7 +1529,7 @@ fn renderMessages(tree: *ui.Tree, state: StateView, snapshot: ?*const Snapshot, 
 }
 
 fn tableHint(tree: *ui.Tree, id: []const u8, text: []const u8) void {
-    if (!tree.beginRect(.{ id, @as(u32, 0) }, .{ .axis = .horizontal, .cross_align = .center, .size = .{ .w = .fill, .h = .{ .fixed = row_height } }, .padding = 4 })) return;
+    if (!tree.beginRect(.{ id, @as(u32, 0) }, .{ .axis = .horizontal, .cross_align = .center, .size = .{ .w = .fill, .h = .{ .fixed = row_height } }, .padding = 4, .padding_y = 0 })) return;
     defer tree.endRect();
     tree.text(id, text, .{ .font = style.ui_font, .color = style.col.text_disabled });
 }
@@ -1536,7 +1537,7 @@ fn tableHint(tree: *ui.Tree, id: []const u8, text: []const u8) void {
 /// A cell of a table; width 0 takes the room the others leave.
 fn statCell(tree: *ui.Tree, id: anytype, text: []const u8, width: f32, color: ui.Color, click: ?ui.Target) void {
     const size: ui.Size = .{ .w = if (width == 0) .fill else .{ .fixed = width }, .h = .fill };
-    if (!tree.beginRect(id, .{ .axis = .horizontal, .cross_align = .center, .size = size, .padding = 4, .clip_content = true, .bg_hover = if (click != null) style.col.tab_hover else null, .corner_radius = 3 })) return;
+    if (!tree.beginRect(id, .{ .axis = .horizontal, .cross_align = .center, .size = size, .padding = 4, .padding_y = 0, .clip_content = true, .bg_hover = if (click != null) style.col.tab_hover else null, .corner_radius = 3 })) return;
     defer tree.endRect();
     if (click) |target| {
         tree.onClick(target, .left);

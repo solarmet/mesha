@@ -17,11 +17,21 @@ const session = @import("session.zig");
 const preview = @import("preview.zig");
 const watches = @import("watches.zig");
 const selection = @import("selection.zig");
+const transport_fixture = @import("transport_fixture.zig");
+const workspace = @import("workspace.zig");
+const action_palette = @import("../action_palette.zig");
+const names = @import("names.zig");
+const prompts = @import("prompts.zig");
+const state = @import("../state.zig");
+const fixed_panels = @import("../fixed_panels.zig");
+const editor_sequencer = @import("../editor_sequencer.zig");
+const commands_mod = @import("commands.zig");
+const chrome = @import("chrome.zig");
 const Fixture = struct {
     mem: memory.Memory = undefined,
     atoms: Atom.Registry = undefined,
     tables: Table.Registry = undefined,
-    transport: @import("transport_fixture.zig").Transport = undefined,
+    transport: transport_fixture.Transport = undefined,
     doc: Atom = m.none,
     bone: u32 = 0,
     clip: u32 = 0,
@@ -30,7 +40,7 @@ const Fixture = struct {
         try f.atoms.init(&f.mem);
         try f.tables.init(&f.mem, 96);
         try f.transport.init(&f.mem, &f.atoms, &f.tables);
-        try @import("workspace.zig").ensure(&f.mem, &f.atoms, &f.tables);
+        try workspace.ensure(&f.mem, &f.atoms, &f.tables);
         f.doc = f.atoms.intern("filmstrip_test");
         try library.create(&f.tables, &f.atoms, .{ .scope = mesha.resources.applicationScope(f.tables.memory), .doc = f.doc });
         const s = session.get(&f.tables);
@@ -195,16 +205,16 @@ test "filmstrip frame prompt wraps or clamps without authoring and rejects a cha
     try f.init();
     defer f.deinit();
     const scratch = try f.mem.tableScratchAllocator();
-    try @import("../action_palette.zig").ensure(scratch, &f.atoms, &f.tables);
+    try action_palette.ensure(scratch, &f.atoms, &f.tables);
     const action = f.atoms.intern("figure_frame_seek");
     const opened = try fstrip.handleAction(&f.tables, &f.atoms, action);
     try std.testing.expect(opened);
     // The request only queued action palette presentation, which this unit does not execute.
     const settings = fstrip.config(&f.tables);
     const revision = f.revision();
-    try std.testing.expectError(error.InvalidCharacter, fstrip.submitPrompt(&f.tables, &f.atoms, @import("names.zig").clip_frame, "1.5"));
+    try std.testing.expectError(error.InvalidCharacter, fstrip.submitPrompt(&f.tables, &f.atoms, names.clip_frame, "1.5"));
     try std.testing.expectEqual(@as(u32, 0), settings.frame.*);
-    const wrapped = try fstrip.submitPrompt(&f.tables, &f.atoms, @import("names.zig").clip_frame, "-1");
+    const wrapped = try fstrip.submitPrompt(&f.tables, &f.atoms, names.clip_frame, "-1");
     try std.testing.expect(wrapped);
     try std.testing.expectEqual(@as(u32, 15), settings.frame.*);
     try std.testing.expectEqual(revision, f.revision());
@@ -212,16 +222,16 @@ test "filmstrip frame prompt wraps or clamps without authoring and rejects a cha
     _ = try f.apply(.{ .set_clip = .{ .doc = f.doc, .id = f.clip, .loop = 0 } });
     try f.transport.synchronize();
     const clamped_revision = f.revision();
-    const clamped_end = try fstrip.submitPrompt(&f.tables, &f.atoms, @import("names.zig").clip_frame, "99");
+    const clamped_end = try fstrip.submitPrompt(&f.tables, &f.atoms, names.clip_frame, "99");
     try std.testing.expect(clamped_end);
     try std.testing.expectEqual(@as(u32, 15), settings.frame.*);
-    const clamped_start = try fstrip.submitPrompt(&f.tables, &f.atoms, @import("names.zig").clip_frame, "-1");
+    const clamped_start = try fstrip.submitPrompt(&f.tables, &f.atoms, names.clip_frame, "-1");
     try std.testing.expect(clamped_start);
     try std.testing.expectEqual(@as(u32, 0), settings.frame.*);
     try std.testing.expectEqual(clamped_revision, f.revision());
 
     settings.clip.* = 0;
-    try std.testing.expectError(error.PromptAnimationChanged, fstrip.submitPrompt(&f.tables, &f.atoms, @import("names.zig").clip_frame, "4"));
+    try std.testing.expectError(error.PromptAnimationChanged, fstrip.submitPrompt(&f.tables, &f.atoms, names.clip_frame, "4"));
     try std.testing.expectEqual(@as(u32, 0), settings.frame.*);
 }
 
@@ -238,7 +248,7 @@ test "filmstrip actual card edge queues hold one undo and cancels before asynchr
     try std.testing.expect(try fstrip.pointerMove(&f.tables, &f.atoms, p.x + 3 * frame_width));
     _ = fstrip.end(fstrip.config(&f.tables), .commit);
     const pending = fstrip.config(&f.tables).pending.*;
-    fstrip.reconcileResult(&f.tables, &f.atoms, @import("session.zig").Metadata.from(@as(mesha.figure.Payload, .{ .set_clip_hold = .{ .doc = f.doc, .clip = f.clip, .frame = 0, .hold = 6, .request = 17 } })), null);
+    fstrip.reconcileResult(&f.tables, &f.atoms, session.Metadata.from(@as(mesha.figure.Payload, .{ .set_clip_hold = .{ .doc = f.doc, .clip = f.clip, .frame = 0, .hold = 6, .request = 17 } })), null);
     try std.testing.expectEqual(pending, fstrip.config(&f.tables).pending.*);
     fstrip.settle(&f.tables, &f.atoms);
     try std.testing.expectEqual(@as(u8, 1), fstrip.config(&f.tables).transaction.*);
@@ -253,7 +263,7 @@ test "filmstrip actual card edge queues hold one undo and cancels before asynchr
     try f.transport.synchronize();
     try std.testing.expect(try fstrip.pointerDown(&f.tables, &f.atoms, rect, p));
     _ = try fstrip.pointerMove(&f.tables, &f.atoms, p.x + 5 * frame_width);
-    @import("workspace.zig").focusLost(&f.tables, &f.atoms);
+    workspace.focusLost(&f.tables, &f.atoms);
     try f.settle();
     try std.testing.expectEqual(@as(u32, 19), fstrip.clipRow(&f.tables, &f.atoms).?.frames);
     try std.testing.expectEqual(@as(u32, 11), (try fstrip.keys(&f.tables, &f.atoms))[1].frame);
@@ -339,15 +349,15 @@ test "filmstrip numeric prompt freezes key doc bone mode and no-op preserves red
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
-    try @import("../action_palette.zig").ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    try action_palette.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
     try f.select(0);
     const s = session.get(&f.tables);
-    try @import("prompts.zig").editTarget(&f.mem, &f.tables, &f.atoms, f.atoms.intern("bone"), f.bone, 2, .whole, null);
+    try prompts.editTarget(&f.mem, &f.tables, &f.atoms, f.atoms.intern("bone"), f.bone, 2, .whole, null);
     // Discard only action palette presentation commands, not any document command.
     s.active_bone.* = 999;
     s.active_kind.* = f.atoms.intern("shape");
     s.active_id.* = 999;
-    const payload = try @import("prompts.zig").fieldCommand(&f.tables, &f.atoms, s, "30");
+    const payload = try prompts.fieldCommand(&f.tables, &f.atoms, s, "30");
     try std.testing.expectEqual(f.bone, payload.set_pose_channels.channels[0].bone);
     try fstrip.editPose(&f.tables, &f.atoms, payload);
     try f.settle();
@@ -362,9 +372,9 @@ test "filmstrip numeric prompt freezes key doc bone mode and no-op preserves red
     try f.transport.synchronize();
     try std.testing.expectApproxEqAbs(@as(f32, std.math.pi / 6.0), (try f.savedRotation(0)).?, 1e-6);
     fstrip.config(&f.tables).selected_frame.* = 8;
-    try std.testing.expectError(error.PromptAnimationChanged, @import("prompts.zig").fieldCommand(&f.tables, &f.atoms, s, "45"));
+    try std.testing.expectError(error.PromptAnimationChanged, prompts.fieldCommand(&f.tables, &f.atoms, s, "45"));
     s.doc.* = f.atoms.intern("other");
-    try std.testing.expectError(error.PromptDocumentChanged, @import("prompts.zig").fieldCommand(&f.tables, &f.atoms, s, "45"));
+    try std.testing.expectError(error.PromptDocumentChanged, prompts.fieldCommand(&f.tables, &f.atoms, s, "45"));
 }
 test "filmstrip capture unique names deep duplicate independent poses key delete clip settings and rejected command cancel" {
     var f: Fixture = undefined;
@@ -564,7 +574,7 @@ test "filmstrip undoing a key load clears auto-key relationship instead of overw
     try f.select(0);
     _ = try f.apply(.{ .undo = .{ .doc = f.doc } });
     try f.transport.synchronize();
-    @import("workspace.zig").reconcileResult(&f.tables, &f.atoms, @import("session.zig").Metadata.from(@as(mesha.figure.Payload, .{ .undo = .{ .doc = f.doc } })), null);
+    workspace.reconcileResult(&f.tables, &f.atoms, session.Metadata.from(@as(mesha.figure.Payload, .{ .undo = .{ .doc = f.doc } })), null);
     const c = fstrip.config(&f.tables);
     try std.testing.expectEqual(@as(u8, 0), c.key_selected.*);
     try std.testing.expectEqual(@as(u8, 1), c.preview.*);
@@ -579,7 +589,7 @@ test "filmstrip leaving Animate for Rig and history there require a fresh card l
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
-    try @import("../action_palette.zig").ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    try action_palette.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
     const second = (try f.apply(.{ .add_bone = .{ .doc = f.doc, .name = f.atoms.intern("second"), .length = 30 } })).?;
     _ = try f.apply(.{ .set_pose_channels = .{ .doc = f.doc, .channels = &.{.{ .bone = second, .rotation = 0.7 }} } });
     const s = session.get(&f.tables);
@@ -590,7 +600,7 @@ test "filmstrip leaving Animate for Rig and history there require a fresh card l
     try std.testing.expectEqual(@as(u8, 0), c.key_selected.*);
     const undo: mesha.plugin.figure_api.Payload = .{ .undo = .{ .doc = f.doc } };
     const result = f.apply(undo);
-    @import("workspace.zig").reconcileResult(&f.tables, &f.atoms, @import("session.zig").Metadata.from(@as(mesha.figure.Payload, undo)), result);
+    workspace.reconcileResult(&f.tables, &f.atoms, session.Metadata.from(@as(mesha.figure.Payload, undo)), result);
     _ = try result;
     try std.testing.expectEqual(@as(u8, 0), c.key_selected.*);
     // Working-only editing must not restore the old relationship on reentry.
@@ -617,14 +627,14 @@ test "filmstrip foreign same-frame pose replacement rejects frozen numeric promp
     try f.transport.synchronize();
     try f.select(0);
     const s = session.get(&f.tables);
-    try @import("../action_palette.zig").ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
-    try @import("prompts.zig").editTarget(&f.mem, &f.tables, &f.atoms, f.atoms.intern("bone"), f.bone, 2, .whole, null);
+    try action_palette.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    try prompts.editTarget(&f.mem, &f.tables, &f.atoms, f.atoms.intern("bone"), f.bone, 2, .whole, null);
     const payload: mesha.plugin.figure_api.Payload = .{ .set_clip_key = .{ .doc = f.doc, .clip = f.clip, .frame = 0, .pose = replacement } };
     const result = f.apply(payload);
-    @import("workspace.zig").reconcileResult(&f.tables, &f.atoms, @import("session.zig").Metadata.from(@as(mesha.figure.Payload, payload)), result);
+    workspace.reconcileResult(&f.tables, &f.atoms, session.Metadata.from(@as(mesha.figure.Payload, payload)), result);
     _ = try result;
     try f.transport.synchronize();
-    try std.testing.expectError(error.PromptAnimationChanged, @import("prompts.zig").fieldCommand(&f.tables, &f.atoms, s, "30"));
+    try std.testing.expectError(error.PromptAnimationChanged, prompts.fieldCommand(&f.tables, &f.atoms, s, "30"));
     try std.testing.expectEqual(@as(u8, 0), fstrip.config(&f.tables).key_selected.*);
     try fstrip.editPose(&f.tables, &f.atoms, .{ .set_pose_channels = .{ .doc = f.doc, .channels = &.{.{ .bone = f.bone, .rotation = 0.3 }} } });
     try f.settle();
@@ -703,16 +713,15 @@ test "filmstrip Tools coordinates are independent of full Stage capture" {
     try f.init();
     defer f.deinit();
     const panels_mod = mesha.panels;
-    const workspace = @import("workspace.zig");
     const input = mesha.input;
-    try @import("../state.zig").ensureViewFocus(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
-    try @import("../action_palette.zig").ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    try state.ensureViewFocus(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    try action_palette.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
     try panels_mod.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
     panels_mod.relayout(&f.tables, &f.atoms, .{ .w = 1920, .h = 1080 });
-    // The editor's record of the active workspace, which arranging one sets.
-    try @import("../workspaces.zig").ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
-    @import("../workspaces.zig").arrangeNow(&f.tables, &f.atoms, .figure);
-    @import("../state.zig").setViewFocus(&f.tables, &f.atoms, f.atoms.intern(workspace.canvas_id));
+    // The editor's fixed panels, whose figure stage being shown is when the figure editor runs.
+    try fixed_panels.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    fixed_panels.layOutNow(&f.tables, &f.atoms, .figure_stage);
+    state.setViewFocus(&f.tables, &f.atoms, f.atoms.intern(workspace.canvas_id));
     const s = workspace.session.get(&f.tables);
     s.mode.* = f.atoms.intern("design");
     s.tool.* = f.atoms.intern("stick");
@@ -743,18 +752,18 @@ test "filmstrip focused Timeline Space subscription toggles playback once" {
     try f.init();
     defer f.deinit();
     const panels_mod = mesha.panels;
-    const workspace = @import("workspace.zig");
-    try @import("../state.zig").ensureViewFocus(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
-    try @import("../action_palette.zig").ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    try state.ensureViewFocus(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    try action_palette.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
     try panels_mod.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
     panels_mod.relayout(&f.tables, &f.atoms, .{ .w = 1920, .h = 1080 });
-    // The editor's record of the active workspace, which arranging one sets.
-    try @import("../workspaces.zig").ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
-    @import("../workspaces.zig").arrangeNow(&f.tables, &f.atoms, .figure);
-    @import("../state.zig").setViewFocus(&f.tables, &f.atoms, f.atoms.intern(workspace.canvas_id));
+    // The editor's fixed panels, whose figure stage being shown is when the figure editor runs.
+    try fixed_panels.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    fixed_panels.layOutNow(&f.tables, &f.atoms, .figure_stage);
+    state.setViewFocus(&f.tables, &f.atoms, f.atoms.intern(workspace.canvas_id));
     // The view's subscribe kernel alone, as the frame's last system runs it.
     const subscribing: mesha.sequencer.Sequencer = .{ .name = "subscribing", .steps = &.{.{ .system = subscriber() }} };
-    @import("../editor_sequencer.zig").run(&f.mem, &f.atoms, &f.tables, &subscribing, null);
+    try mesha.sequencer.ensureInboxes(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables, &subscribing);
+    editor_sequencer.run(&f.mem, &f.atoms, &f.tables, &subscribing, null);
     var down_count: usize = 0;
     var up_count: usize = 0;
     const rows = f.tables.findByName(workspace.input_subscriptions).?;
@@ -778,10 +787,10 @@ test "filmstrip focused Timeline Space subscription toggles playback once" {
 fn subscriber() mesha.sequencer.System {
     return .{
         .name = "test_subscriber",
-        .root = @import("workspace.zig").figure_root,
+        .root = workspace.figure_root,
         .claims = claimsNothing,
         .access = subscriberAccess,
-        .kernels = &.{.{ .name = "test_subscriber.subscribe", .run = @import("workspace.zig").subscribe }},
+        .kernels = &.{.{ .name = "test_subscriber.subscribe", .run = workspace.subscribe }},
     };
 }
 
@@ -792,20 +801,17 @@ fn claimsNothing(tag: mesha.Atom) bool {
 
 fn subscriberAccess(frame: *const mesha.sequencer.Frame) mesha.sequencer.Access {
     _ = frame;
-    const workspace = @import("workspace.zig");
     var access: mesha.sequencer.Access = .{};
     access.writeAll(&.{ workspace.input_subscriptions, workspace.time_subscriptions });
     return access;
 }
 
-test "filmstrip ignores stale animation frames outside the figure workspace" {
+test "filmstrip ignores stale animation frames while the figure stage is not shown" {
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
-    const workspaces = @import("../workspaces.zig");
-    // The editor's record of the active workspace, which arranging one sets.
-    try workspaces.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
-    const editor_sequencer = @import("../editor_sequencer.zig");
+    // The editor's fixed panels, whose figure stage being shown is when the figure editor runs.
+    try fixed_panels.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
     const settings = fstrip.config(&f.tables);
     settings.playing.* = 1;
     settings.seconds.* = 0;
@@ -818,51 +824,68 @@ test "filmstrip ignores stale animation frames outside the figure workspace" {
     const animation_only: mesha.sequencer.Sequencer = .{ .name = "animation_only", .steps = &.{.{ .system = fstrip.system() }} };
     try mesha.sequencer.ensureInboxes(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables, &animation_only);
     const cases = [_]struct {
-        workspace: workspaces.Workspace,
+        layout: fixed_panels.FixtureLayout,
         expected_seconds: f32,
     }{
-        .{ .workspace = .app, .expected_seconds = 0 },
-        .{ .workspace = .figure, .expected_seconds = 0.125 },
-        .{ .workspace = .app, .expected_seconds = 0.125 },
+        .{ .layout = .empty, .expected_seconds = 0 },
+        .{ .layout = .figure_stage, .expected_seconds = 0.125 },
+        .{ .layout = .empty, .expected_seconds = 0.125 },
     };
     for (cases) |case| {
-        workspaces.arrangeNow(&f.tables, &f.atoms, case.workspace);
+        fixed_panels.layOutNow(&f.tables, &f.atoms, case.layout);
         try mesha.sequencer.deliverMessage(&f.tables, mesha.sequencer.inboxOf(fstrip.system()), frame_tag, &.{}, std.mem.asBytes(&frame));
         editor_sequencer.run(&f.mem, &f.atoms, &f.tables, &animation_only, null);
         try std.testing.expectEqual(case.expected_seconds, settings.seconds.*);
     }
 }
 
-test "switching workspaces rearranges panels without resetting the document session" {
+test "the filmstrip hears the time system's frames only while its clip plays" {
+    var f: Fixture = undefined;
+    try f.init();
+    defer f.deinit();
+    try state.ensureViewFocus(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    try action_palette.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    try mesha.panels.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    mesha.panels.relayout(&f.tables, &f.atoms, .{ .w = 1920, .h = 1080 });
+    try fixed_panels.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    fixed_panels.layOutNow(&f.tables, &f.atoms, .figure_stage);
+    const animation_only: mesha.sequencer.Sequencer = .{ .name = "animation_only", .steps = &.{.{ .system = fstrip.system() }} };
+    try mesha.sequencer.ensureInboxes(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables, &animation_only);
+    const inbox = mesha.sequencer.inboxOf(fstrip.system());
+    // Animating, paused, playing, paused again: each frame heard draws the figure's panels.
+    for ([_]u8{ 0, 1, 0 }) |playing| {
+        fstrip.config(&f.tables).playing.* = playing;
+        editor_sequencer.run(&f.mem, &f.atoms, &f.tables, &animation_only, null);
+        var frames_heard: u8 = 0;
+        var rows = f.tables.findByName(workspace.time_subscriptions).?.query(mesha.time.SubscriptionRow);
+        while (rows.next()) |row| {
+            if (row.view.inbox.* == inbox and row.view.kind.* == .frame) frames_heard += 1;
+        }
+        try std.testing.expectEqual(playing, frames_heard);
+    }
+}
+
+test "the figure stage shown in place of the focused panel, closed and shown again keeps the document session" {
     var f: Fixture = undefined;
     try f.init();
     defer f.deinit();
     const panels_mod = mesha.panels;
     try panels_mod.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
     panels_mod.relayout(&f.tables, &f.atoms, .{ .w = 1920, .h = 1080 });
-    const retained_session = @import("workspace.zig").session.get(&f.tables);
+    const retained_session = workspace.session.get(&f.tables);
     retained_session.view_zoom.* = 2.5;
     retained_session.active_id.* = 42;
     fstrip.config(&f.tables).frame.* = 7;
-    const workspaces = @import("../workspaces.zig");
-    try workspaces.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
-    @import("workspace.zig").openWorkspace(&f.tables, &f.atoms);
-    const panels_api = mesha.plugin.panels;
-    const requests = panels_api.Requests.of(&f.mem, &f.tables, panels_api.commands_table_name);
-    var rows = requests.iterate();
-    while (rows.next()) |command| panels_mod.applyCmd(&f.tables, &f.atoms, command);
-    requests.reset();
-    try std.testing.expectEqual(workspaces.Workspace.figure, workspaces.activeWorkspace(&f.tables, &f.atoms));
-    // A workspace shows its own arrangement, which the workspaces system declares: the figure
-    // stage, focused as it opens.
-    const figure_stage = f.atoms.intern(@import("workspace.zig").canvas_id);
-    try std.testing.expect(workspaces.panelShown(&f.tables, figure_stage));
-    workspaces.arrangeNow(&f.tables, &f.atoms, .figure);
-    try std.testing.expect(panels_mod.isOpen(&f.tables, &f.atoms, figure_stage));
-    try std.testing.expect(panels_mod.hasFocus(&f.tables, &f.atoms, figure_stage));
-    @import("../workspaces.zig").arrangeNow(&f.tables, &f.atoms, .app);
-    try std.testing.expect(!panels_mod.isOpen(&f.tables, &f.atoms, figure_stage));
-    @import("../workspaces.zig").arrangeNow(&f.tables, &f.atoms, .figure);
+    try fixed_panels.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
+    const figure_stage = f.atoms.intern(workspace.canvas_id);
+    workspace.showStage(&f.tables, &f.atoms);
+    // Shown alone: Layers and Properties open only when asked for.
+    try std.testing.expect(fixed_panels.panelShown(&f.tables, figure_stage));
+    try std.testing.expect(!fixed_panels.panelShown(&f.tables, workspace.outliner_panel.id));
+    try std.testing.expect(!fixed_panels.panelShown(&f.tables, workspace.inspector_panel.id));
+    fixed_panels.hidePanel(&f.tables, figure_stage);
+    try std.testing.expect(!fixed_panels.panelShown(&f.tables, figure_stage));
+    workspace.showStage(&f.tables, &f.atoms);
     try std.testing.expectEqual(@as(f32, 2.5), retained_session.view_zoom.*);
     try std.testing.expectEqual(@as(u32, 42), retained_session.active_id.*);
     try std.testing.expectEqual(@as(u32, 7), fstrip.config(&f.tables).frame.*);
@@ -873,7 +896,7 @@ test "preview shows rest in Design, the working pose elsewhere, and nothing once
     try f.init();
     defer f.deinit();
     const figure = mesha_runtime.figure;
-    const context = @import("session.zig").figureContext(&f.tables, &f.atoms);
+    const context = session.figureContext(&f.tables, &f.atoms);
     const s = session.get(&f.tables);
     s.mode.* = f.atoms.intern("design");
     try f.preparePreview();
@@ -884,7 +907,7 @@ test "preview shows rest in Design, the working pose elsewhere, and nothing once
     try f.preparePreview();
     const working = try preview.evaluation(&f.tables, &f.atoms);
     try std.testing.expectApproxEqAbs(@as(f32, 1), working.channels[0].rotation.?, 1e-6);
-    _ = try @import("commands.zig").submit(context, .{ .close_doc = .{ .doc = f.doc, .discard = true } });
+    _ = try commands_mod.submit(context, .{ .close_doc = .{ .doc = f.doc, .discard = true } });
     // Admitting the close already hides the canvas, before the close runs.
     try std.testing.expectError(error.Busy, preview.ready(&f.tables, &f.atoms));
     try f.drain(false);
@@ -896,7 +919,7 @@ test "filmstrip public presentation override precedes tint and preserves solid a
     try f.init();
     defer f.deinit();
     const figure = mesha.figure;
-    const context = @import("session.zig").figureContext(&f.tables, &f.atoms);
+    const context = session.figureContext(&f.tables, &f.atoms);
     const data = try figure_runtime.readDefinition(context, f.doc, (try f.mem.frameScratchAllocator()).allocator);
     const shape = data.shapes[0].id;
     _ = try f.apply(.{ .set_shape = .{ .doc = f.doc, .id = shape, .stroke_color = .{ 0, 0, 255, 96 } } });
@@ -984,7 +1007,6 @@ test "preview main render budget rejection returns overlays for canvas continuat
     try f.init();
     defer f.deinit();
     try f.preparePreview();
-    const chrome = @import("chrome.zig");
     const editor = session.get(&f.tables);
     try session.table(&f.tables).assignString(editor.status, "authoritative sentinel");
     const flags_before = editor.flags.*;

@@ -23,6 +23,7 @@ const outline = mesha.ui.outline;
 const panel_frame = @import("../panel_frame.zig");
 const editor_state = @import("../state.zig");
 const style = @import("../ui/style.zig");
+const editor_sequencer = @import("../editor_sequencer.zig");
 
 // ---- measures --------------------------------------------------------------------------------------
 
@@ -57,8 +58,8 @@ const panel_state_table = Atom.from(panels_mod.state_table_name);
 pub fn lineHeight(metrics: ?*Table) f32 {
     const found = metrics orelse return fallback_line_height;
     const outline_style = style.outlineStyle();
-    const text_font = resources.fontMetrics(found, resources.kApplicationScope, outline_style.text_font) orelse return fallback_line_height;
-    const code_font = resources.fontMetrics(found, resources.kApplicationScope, outline_style.code_font) orelse return fallback_line_height;
+    const text_font = resources.fontMetrics(found, resources.kApplicationScope, outline_style.text_font.name) orelse return fallback_line_height;
+    const code_font = resources.fontMetrics(found, resources.kApplicationScope, outline_style.code_font.name) orelse return fallback_line_height;
     const tallest = @max(text_font.pixel_height, code_font.pixel_height);
     return @round(tallest + line_spacing);
 }
@@ -451,5 +452,5 @@ pub fn render(scratch: memory_mod.Scratch, tables: *Table.Registry, atoms: *Atom
         .offset = .{ .x = viewport.x, .y = viewport.y },
         .hovered = editor_state.hoveredElementId(tables),
         .depth = panels_mod.kPanelHitDepth,
-    }, ctx, editor_state.hitRegions(tables, atoms));
+    }, ctx, editor_state.hitRegions(tables, atoms), editor_sequencer.redrawInbox());
 }

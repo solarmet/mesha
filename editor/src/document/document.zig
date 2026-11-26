@@ -410,12 +410,12 @@ const fallback_line_height: f32 = 21;
 /// owner's `ui.outline.Style`'s), from `font_metrics`, the table `resources_font_metrics` (a
 /// kernel's, declared read, or the draw's), as the outline measures its lines; a fallback while
 /// the fonts are not loaded.
-pub fn metricsOf(font_metrics: ?*Table, text_font_name: Atom, code_font_name: Atom) Metrics {
+pub fn metricsOf(font_metrics: ?*Table, text_font: resources.Font, code_font: resources.Font) Metrics {
     const fallback: Metrics = .{ .line_height = fallback_line_height };
     const found = font_metrics orelse return fallback;
-    const text_font = resources.fontMetrics(found, resources.kApplicationScope, text_font_name) orelse return fallback;
-    const code_font = resources.fontMetrics(found, resources.kApplicationScope, code_font_name) orelse return fallback;
-    const tallest = @max(text_font.pixel_height, code_font.pixel_height);
+    const text_metrics = resources.fontMetrics(found, resources.kApplicationScope, text_font.name) orelse return fallback;
+    const code_metrics = resources.fontMetrics(found, resources.kApplicationScope, code_font.name) orelse return fallback;
+    const tallest = @max(text_metrics.pixel_height, code_metrics.pixel_height);
     return .{ .line_height = @round(tallest + line_spacing) };
 }
 

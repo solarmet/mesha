@@ -33,6 +33,9 @@ const Fixture = struct {
         try resources.Requests.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables, resources.commands_table_name);
         try mesha.panels.ensure(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables);
         try workspace.ensure(&f.mem, &f.atoms, &f.tables);
+        // The inboxes and tables of subscriptions of the editor's systems, which the test runs.
+        const authoring = workspace.figureAuthoring();
+        try mesha.sequencer.ensureInboxes(try f.mem.tableScratchAllocator(), &f.atoms, &f.tables, &authoring.sequencer());
     }
     fn capture(f: *Fixture, sent: *resources.CmdPayload) mesha.sequencer.Applied {
         var copy = sent.*;

@@ -23,6 +23,7 @@ const chrome = @import("chrome.zig");
 const style = @import("../ui/style.zig");
 const editor_state = @import("../state.zig");
 const editor_mod = @import("../editor.zig");
+const editor_sequencer = @import("../editor_sequencer.zig");
 
 pub const name = "editor_figure_context_menu";
 
@@ -90,7 +91,7 @@ const animate_items = [_]Item{
 } ++ pose_items;
 
 const menu_width: f32 = 260;
-const row_height: f32 = 28;
+const row_height: f32 = style.metric.row_height;
 const separator_height: f32 = 9;
 const padding: f32 = 4;
 
@@ -162,7 +163,7 @@ pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registr
         backdrop.trackHover("");
         backdrop.endRect();
     }
-    backdrop.commit(.{ .root_size = .{ .x = screen_w, .y = screen_h }, .offset = offset, .hovered = hovered, .depth = hit_depth }, ctx, hits);
+    backdrop.commit(.{ .root_size = .{ .x = screen_w, .y = screen_h }, .offset = offset, .hovered = hovered, .depth = hit_depth }, ctx, hits, editor_sequencer.redrawInbox());
 
     const entries = items(session.get(tables), @enumFromInt(state.origin.*));
     var height = 2 * padding;
@@ -200,6 +201,7 @@ pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registr
                 .cross_align = .center,
                 .size = .{ .w = .fill, .h = .{ .fixed = row_height } },
                 .padding = 6,
+                .padding_y = 0,
                 .bg_hover = style.col.accent_deep,
                 .corner_radius = 3,
             })) continue;
@@ -213,5 +215,5 @@ pub fn render(mem: *memory.Memory, tables: *Table.Registry, atoms: *Atom.Registr
             tree.text(.{ "figure.menu.shortcut", index }, shortcut, .{ .font = style.ui_font, .color = style.col.text_dim });
         }
     }
-    tree.commit(.{ .root_size = .{ .x = menu_width, .y = height }, .origin = .{ .x = x, .y = y }, .offset = offset, .hovered = hovered, .depth = hit_depth + 1 }, ctx, hits);
+    tree.commit(.{ .root_size = .{ .x = menu_width, .y = height }, .origin = .{ .x = x, .y = y }, .offset = offset, .hovered = hovered, .depth = hit_depth + 1 }, ctx, hits, editor_sequencer.redrawInbox());
 }

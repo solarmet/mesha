@@ -18,8 +18,8 @@
 //!   the three beside it: the files the status counted, listed or not. The source tables are the one
 //!   place the status's files are kept: the commands read them. They are written in order
 //!   (`table_view.rowsInOrder`), a cell only when what it holds changed.
-//! - `global.vcs_git_status` (`C-x g`) shows the panel at the right of the text workspace,
-//!   switching to it from another, gives it the focus and refreshes; invoked while the panel has
+//! - `global.vcs_git_status` (`C-x g`) shows the panel at the window's right,
+//!   gives it the focus and refreshes; invoked while the panel has
 //!   the focus it refreshes. `global.vcs_status`, the project menu's `v`, does the same, but
 //!   when the status answers that the working directory is in no git repository, or git is not
 //!   there, hides vcs-git and shows vcs-p4 (`p4_status.zig`) in its place.
@@ -121,7 +121,7 @@ const modes = @import("../modes.zig");
 const open = @import("../open.zig");
 const transient = @import("../transient.zig");
 const action_palette = @import("../action_palette.zig");
-const workspaces = @import("../workspaces.zig");
+const fixed_panels = @import("../fixed_panels.zig");
 const table_view = @import("../table_view.zig");
 const document = @import("../document/document.zig");
 const document_view = @import("../document/view.zig");
@@ -142,7 +142,7 @@ pub const panel = Atom.from(panel_name);
 /// The root of the panel's system: its panel draws again when the system changes a table.
 pub const vcs_git_root = Atom.from("vcs_git");
 
-/// The panel, a fixed panel the workspaces system declares while it is shown: along the right
+/// The panel, a fixed panel `fixed_panels` declares while it is shown: along the right
 /// edge of the window.
 pub const fixed_panel: plugin.panels.Open = .{ .id = panel, .title = "vcs-git", .root = vcs_git_root, .side = .right, .share = 0.45 };
 
@@ -1062,8 +1062,7 @@ const runner_log_table = Atom.from(runner.log_table_name);
 const text_editor_requests = Atom.from(text_editor.commands_table_name);
 const transient_requests = Atom.from(transient.requests_table_name);
 const palette_requests = Atom.from(action_palette.requests_table_name);
-const shown_panels_table = Atom.from(workspaces.shown_panels_table_name);
-const workspace_table = Atom.from(workspaces.workspace_table_name);
+const shown_panels_table = Atom.from(fixed_panels.shown_panels_table_name);
 const panel_requests_table = Atom.from(plugin.panels.commands_table_name);
 const panel_nodes_table = Atom.from(panels_mod.nodes_table_name);
 const panel_state_table = Atom.from(panels_mod.state_table_name);
@@ -1353,9 +1352,8 @@ fn access(frame: *const sequencer.Frame) sequencer.Access {
     result.writeIfPresent(tables, transient_requests);
     result.writeIfPresent(tables, palette_requests);
     open.declareOpenAccess(&result, tables);
-    // Showing, focusing and closing the panel, and switching to the text workspace for it.
+    // Showing, focusing and closing the panel.
     result.writeIfPresent(tables, shown_panels_table);
-    result.writeIfPresent(tables, workspace_table);
     result.writeIfPresent(tables, panel_requests_table);
     if (tables.findByName(panel_state_table) != null) result.readAll(&.{ panel_nodes_table, panel_state_table });
     // How tall a line is.
@@ -1595,7 +1593,7 @@ fn followModes(pass: *sequencer.Pass) !void {
 /// Whether the panel is shown: declared, open or about to open.
 fn isShown(pass: *const sequencer.Pass) bool {
     if (!pass.declares(shown_panels_table)) return false;
-    return workspaces.panelShown(pass.frame.tables, panel);
+    return fixed_panels.panelShown(pass.frame.tables, panel);
 }
 
 /// What the panel reads of `os_places`, each empty without it.
@@ -1958,16 +1956,13 @@ pub const Work = struct {
         }
     }
 
-    /// `global.vcs_git_status`: shows the panel in the text workspace and gives it the focus,
+    /// `global.vcs_git_status`: shows the panel and gives it the focus,
     /// refreshing; while it has the focus, refreshes.
     fn show(work: Work) !void {
         const frame = work.pass.frame;
         const tables_now = work.tables();
         const atoms = frame.atoms;
-        const workspace = workspaces.activeWorkspace(tables_now, atoms);
-        const elsewhere = workspace == .app or workspace == .figure;
-        if (elsewhere and work.pass.writes(workspace_table)) workspaces.arrange(tables_now, atoms, .text);
-        workspaces.showPanel(tables_now, atoms, panel, .arranged, .take);
+        fixed_panels.showPanel(tables_now, atoms, panel, .arranged, .take);
         work.state.view.* = @intFromEnum(View.status);
         // What the page shows is published before the first answer, so no table of it reads as
         // not published.
@@ -1979,7 +1974,7 @@ pub const Work = struct {
     /// vcs-p4 shown in its place (`global.vcs_p4_status`, invoked as the actions system next
     /// applies its requests).
     fn handOff(work: Work) void {
-        workspaces.hidePanel(work.tables(), panel);
+        fixed_panels.hidePanel(work.tables(), panel);
         plugin.action_api.requestInvoke(work.tables(), .{ plugin.action_api.global_mode, Atom.from("vcs_p4_status") });
     }
 
@@ -1992,7 +1987,7 @@ pub const Work = struct {
             .process_log => state.view.* = state.process_log_return.*,
             .log => state.view.* = @intFromEnum(View.status),
             .rebase => try git_rebase.leave(work),
-            .status => workspaces.hidePanel(work.tables(), panel),
+            .status => fixed_panels.hidePanel(work.tables(), panel),
         }
     }
 
